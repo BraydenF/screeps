@@ -33,7 +33,7 @@ const roleService = {
         const energyAvailable = Game.spawns['spawn'].room.energyAvailable;
 
         if (energyAvailable >= kit.cost) {
-            return Game.spawns['spawn'].createCreep(kit, null, { role: role });   
+            return Game.spawns['spawn'].createCreep(kit.parts, null, { role: role });   
         } else {
             console.log(`Insufficent stored energy: ${energyAvailable}/${kit.cost}`);
             return false;
@@ -74,21 +74,16 @@ const roleService = {
             }
         }
 
-        console.log(spawn.room.energyAvailable, spawn.room.energyAvailable >= 300);
+        // console.log(spawn.room.energyAvailable, spawn.room.energyAvailable >= 300);
         if (spawn.room.energyAvailable >= 300) {
             // managed number of each unit over time
-            console.log(workerCounts.harvester);
             if (workerCounts.harvester < 2) {
                 console.log('spawning harvester');
                 roleService.createCreep('harvester', 'advanced');
-            }
-    
-            if (workerCounts.upgrader === 0) {
+            } else if (workerCounts.upgrader === 0) {
                 console.log('spawning upgrader');
                 roleService.createCreep('upgrader', 'advanced');
-            }
-    
-            if (Game.constructionSites.length > 0 && workerCounts.builder === 0) {
+            } else if (Game.constructionSites.length > 0 && workerCounts.builder === 0) {
                 console.log('spawning builder');
                 roleService.createCreep('builder', 'advanced');
             }
