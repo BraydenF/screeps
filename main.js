@@ -1,4 +1,6 @@
 const roleService = require('role.service');
+// const consoleService = require('console.service');
+// const towerService = require('tower.service');
 
 const SPAWN_ZERO_NAME = 'colony_0';
 
@@ -6,33 +8,32 @@ const colonies = [
     Game.spawns[SPAWN_ZERO_NAME],
 ];
 
-function init_console() {
-    // console commands
-    global.roleService = roleService;
+// allows for expanding of the game console
+const consoleService = {
+    init: function() {
+        // console commands
+        global.roleService = roleService;
 
-    // short cuts
-    global.createCreep = roleService.createCreep;
+        // short cuts
+        global.createCreep = roleService.createCreep;
+    },
 }
 
+// main logic loop
 module.exports.loop = function () {
-    init_console();
-    // console.log('*****************************************************************');
+    console.log('*****************************************************************');
+    consoleService.init();
 
-    const tower = Game.getObjectById('TOWER_ID');
-    if(tower) {
-        const closestDamagedStructure = tower.pos.findClosestByRange(FIND_STRUCTURES, {
-            filter: (structure) => structure.hits < structure.hitsMax
-        });
+    function keys(obj) {
+        return console.log('keys', Object.keys(obj));
+    };
 
-        if(closestDamagedStructure) {
-            tower.repair(closestDamagedStructure);
-        }
+    // const randkey = '624b1b428545bf17e16f179d';
 
-        const closestHostile = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
-        if(closestHostile) {
-            tower.attack(closestHostile);
-        }
-    }
+    // keys(Game.structures);
+    // const structures = Game.structures;
+    // console.log(structures[randkey]);
 
+    // towerService.run();
     roleService.run();
 }
