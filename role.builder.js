@@ -13,14 +13,23 @@ const roleBuilder = {
     /** @param {Creep} creep **/
     run: function(creep) {
 
+        function isEnergyEmpty() {
+            return creep.store[RESOURCE_ENERGY] == 0
+        }
+
+        function isEnergyFull(creep) {
+            return creep.store.getFreeCapacity() == 0
+        }
+
         // fetching engery
         // todo: figure out how to take energy from storage
-        if (creep.memory.building && creep.store[RESOURCE_ENERGY] == 0) {
+        if (creep.memory.building && isEnergyEmpty(creep)) {
             creep.memory.building = false;
             creep.say('🔄 harvest');
         }
+        // creep.store.getFreeCapacity()
 
-        if (!creep.memory.building && creep.store.getFreeCapacity() == 0) {
+        if (!creep.memory.building && isEnergyFull(creep)) {
             creep.memory.building = true;
             creep.say('🚧 build');
         }
