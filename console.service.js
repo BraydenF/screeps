@@ -1,14 +1,16 @@
-const roleService = require('role.service');
+const creepService = require('creep.service');
+const droneService = require('drone.service');
 
 // allows for expanding of the game console
 const consoleService = {
     init: function() {
     // console commands
-        global.roleService = roleService;
-    
+        global.creepService = creepService;
+
         // short cuts
-        global.createCreep = roleService.createCreep;
+        global.createCreep = creepService.createCreep;
+        global.createDrone = droneService.createDrone;
     },
 }
 
-modules.exports = consoleService;
+module.exports = consoleService;
