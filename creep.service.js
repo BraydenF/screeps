@@ -8,6 +8,7 @@ const TARGET_ROLE_COUNT = {
     HARVESTER: 2,
     DRONE: 1,
     UPGRADER: 1,
+    
 }
 
 // todo: can dynamically determine cost, based on parts list
@@ -43,7 +44,7 @@ const creepTracker = {
 
         for(const name in creeps) {
             const creep = Game.creeps[name];
-            creepTracker.data._drones[name] = creep.memory;
+            // creepTracker.data._drones[name] = creep.memory;
 
             if (creep.memory.job === 'harvester') {
                 counters.harvesters++;
@@ -57,6 +58,7 @@ const creepTracker = {
                 counters.freeLoaders++;
             }
         }
+        creepTracker.data._drones = null;
 
         creepTracker.data = { ...counters, ...creepTracker.data };
         creepTracker.save();

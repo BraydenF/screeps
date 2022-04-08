@@ -1,6 +1,6 @@
 const utils = require('utils');
 
-const DRONE_LIMIT = 12;
+const DRONE_LIMIT = 10;
 
 const MODES = {
     STANDBY: 'standby',
@@ -77,11 +77,6 @@ class Drone extends Creep {
         this.set('job', job ? job : memory.job);
         this.set('mode', memory.mode ? memory.mode : 'standby');
         this.set('targetSource', memory.targetSource);
-    }
-
-    requestAssignment() {
-        // todo: check memory for how to assign a job
-        return 'upgrader';
     }
 
     isEnergyEmpty() {
@@ -198,7 +193,7 @@ class Drone extends Creep {
 
     processJob() {
         this.job = this.get('job');
-
+        
         function withdrawlOrHarvest(obj) {
             if (obj) {
                 if (Memory.creepTracker.creepCount < DRONE_LIMIT) {
@@ -216,44 +211,58 @@ class Drone extends Creep {
         }
 
         // todo: come back to this idea of a module system for drones
-        // use a { builder: function() } function each
+        // todo: if I want to do this idea, I should try and use protoTyping for it. I think I could add this to drones
+        if (this.job === 'upgrader') {
+            if (this.isStandby()) {
+                this.setMode('upgrade');
+            }
+            if (this.isMode('upgrade') && this.isEnergyEmpty()) {
+                const { mode, message } = withdrawlOrHarvest(this);
+                this.setMode(mode, message);
+            }
+            if (!this.isMode('upgrade') && this.isEnergyFull()) {
+                this.setMode('upgrade', '⚡ upgrade');
+            }
+        }
         if (this.job === 'builder') {
+            // job change condition: nothing to build
+            const targets = this.creep.room.find(FIND_CONSTRUCTION_SITES);
+            if (!targets.length) {
+                this.set('job', JOBS.MECHANIC);
+            }
+
             if (this.isStandby()) {
                 this.setMode('build');
             }
             if (this.isMode('build') && this.isEnergyEmpty()) {
                 const { mode, message } = withdrawlOrHarvest(this);
                 this.setMode(mode, message);
-
-                // if (this.findResourceTargets(1).length) {
-                //     this.setMode('withdrawl', '🔄 filling up!');
-                // } else {
-                //     this.setMode('harvest', '🔄 harvest');
-                // }
             }
             if (!this.isMode('build') && this.isEnergyFull()) {
                 this.setMode('build', '🚧 build');
             }
-            // droneModules.builder();
-    	} else if (this.job === 'upgrader') {
-    	    if (this.isStandby()) {
-                this.setMode('upgrade');
+    	}
+        if (this.job === JOBS.MECHANIC) {
+            // job change condition: nothing to repair
+            const targets = this.creep.room.find(FIND_STRUCTURES, {
+                filter: object => object.hits < object.hitsMax
+            });
+            if (!targets.length) {
+                this.set('job', JOBS.HARVESTER);
             }
-            if (this.isMode('upgrade') && this.isEnergyEmpty()) {
-                const { mode, message } = withdrawlOrHarvest(this);
-                this.setMode(mode, message);
 
-                // const gatherMethod = Memory.creepCount < 9 ? 'harvest' : 'withdrawl';
-                // this.setMode(gatherMethod, '🔄 filling up!');
+            if (this.isStandby()) {
+                this.setMode('repair', '⚡ repair');
             }
-            if (!this.isMode('upgrade') && this.isEnergyFull()) {
-                this.setMode('upgrade', '⚡ upgrade');
+            if (!this.isMode('repair') && this.isEnergyEmpty()) {
+                // const { mode, message } = withdrawlOrHarvest(this);
+                this.setMode('harvest', '🔄 harvest');
             }
-        }  else if (this.job === 'mechanic') {
-            // todo: mechanic
-            // drone.setMode('repair', '⚡ repair');
-            // droneModules.mechanic();
-        } else if (this.job === 'harvester') {
+            if (!this.isMode('repair') && this.isEnergyFull()) {
+                this.setMode('repair', '⚡ repair');
+            }
+        }
+        if (this.job === 'harvester') {
             if (this.isStandby()) {
                 this.setMode('harvest');
             }
@@ -263,11 +272,9 @@ class Drone extends Creep {
             if (!this.isMode('transfer') && this.isEnergyFull()) {
                 this.setMode('transfer');
             }
-            // droneModules.harvester();
         }
     }
 
-    // todo: should I use the verbage "action" instead of a mode
     processMode() {
         // actions[this.mode]();
         if (this.mode === 'withdrawl') {
@@ -290,38 +297,92 @@ class Drone extends Creep {
 			return this.harvest();
 		} else if (this.isMode('build')) {
 			return this.build();
+			// todo: nothing to build? Become a mechanic.
 		} else if (this.mode === 'upgrade') {
 			return this.upgrade();
 		} else if (this.mode === 'repair') {
 			return this.repair();
+			// todo: nothing to repair? Become a an upgrader?
 		} else {
             return this.harvest();
         }
     }
 
-    /**
-     * Triggers run sequence on a configured Drone
-     */
     run () {
         this.processJob();
         this.processMode();
     }
 }
 
+const kits = {
+    default: { parts: [WORK, CARRY, MOVE], cost: 200 },
+    eKit: { parts: [WORK, CARRY, CARRY, MOVE, MOVE], cost: 300 },
+    v2: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE], cost: 350 },
+    v3: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 400 },
+    v4: { parts: [WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 450 },
+    v5: { parts: [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
+    'v5.idk': { parts: [WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
+    v6: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE], cost: 650 },
+    v7: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE], cost: 750 },
+    v8: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE], cost: 800 },
+};
+let foo;
+
+// w=1 e > 400 || w=
+
+// first 200 is always [work, carry, move]
+// extra 50 is always move.
+// (rest / x) 
+
+    function buyParts(budget) {
+        let remainingBudget = budget;
+        const reciept = { work: 0, carry: 0, move: 0 };
+
+        // MVP parts
+        if (remainingBudget > 200) {
+            remainingBudget = remainingBudget - 200;
+            reciept.work++;
+            reciept.carry++;
+            reciept.move++;
+        }
+
+        // boosted model
+        if (remainingBudget % 100 === 50) {
+            reciept.move++;
+        }
+
+        // { work: 1, carry: 1, n: 1, move: 1.5 }
+        // Remaining budget to be spent as function of work and carry parts
+        // is it 2 carry parts per work?
+        // how many moves?
+
+        
+        // work - cost: 100, 
+        // carry - cost: 50, 
+        // move -  cost: 50, 
+
+        return reciept;
+    }
+
+foo = { work: 1, carry: 1, n: 2, move: 1 } // 200
+foo = { work: 1, carry: 2, n: 3, move: 2 } // 300
+foo = { work: 1, carry: 3, n: 3, move: 3 } // 350
+// foo = { work: 1, carry: 2, n: 3, move: 3 } // 400
+foo = { work: 2, carry: 2, n: 4, move: 3 } // 450
+foo = { work: 3, carry: 2, n: 5, move: 3 } // 550
+// foo = { work: 2, carry: 4, n: 6, move: 4 } // 550
+foo = { work: 3, carry: 3, n: 6, move: 4 } // 650
+foo = { work: 3, carry: 4, n: 7, move: 4 } // 750
+foo = { work: 3, carry: 4, n: 7, move: 5 } // 800
+
+
+
 const droneService = {
     Drone: Drone,
     createDrone: function(job = 'harvester', kitName = 'default') {
-        const kits = {
-            default: { parts: [WORK, CARRY, MOVE], cost: 200 },
-            eKit: { parts: [WORK, CARRY, CARRY, MOVE, MOVE], cost: 300 },
-            v2: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE], cost: 350 },
-            v3: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 400 },
-            v4: { parts: [WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 450 },
-            v5: { parts: [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
-            'v5.idk': { parts: [WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
-        };
-
+        // update to default to largest kit possible
         const kit = typeof kits[kitName] !== 'undefined' ? kits[kitName] : kits.default;
+        console.log(`<b>Building drone:</b> ${job}:${kitName}` )
         return Game.spawns['spawn'].createCreep(kit.parts, null, { role: 'drone', job: job });
     },
     getDrones: function(job) {
@@ -341,39 +402,75 @@ const droneService = {
 
         return drones;
     },
+    getKit: function(energyLimit) {
+        return Object.keys(kits).reduce((targetKey, key) => {
+            if (kits[key].cost > kits[targetKey].cost && kits[key].cost < energyLimit) {
+                return key;
+            }
+            return targetKey;
+        }, 'default');
+    },
     droneManager: function () {
-        const spawn = Game.spawns['spawn'];
+        const room = Game.spawns['spawn'].room;
         const drones = droneService.getDrones();
 
-        /**
-         * Emergency Plan: Create 3 harvesters;
-         */
-        if (spawn.room.energyAvailable >= 300 && drones.length < 3) {
-            console.log('emergency drone created');
-            droneService.createDrone('harvester', 'eKit');
+        const spawnModules = {
+            lowDroneCount: function() {
+                const target_key = droneService.getKit(room.energyCapacityAvailable);
+                if (room.energyAvailable >= 300) {
+                    droneService.createDrone('harvester', target_key);
+                }
+            },
+            randomProduction: function() {
+                const room = Game.spawns['spawn'].room;
+                // const drones = droneService.getDrones();
+                const target_key = droneService.getKit(room.energyCapacityAvailable);
+                const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
+
+                // less than 9 drones AND enough energy
+                if (drones.length <= DRONE_LIMIT && room.energyAvailable >= kits[target_key].cost) {
+                    utils.randexec([45, 35, 20], [
+                        // 40% - harvester
+                        () => droneService.createDrone(JOBS.HARVESTER, target_key),
+                        // 40% - upgrader
+                        () => droneService.createDrone(JOBS.UPGRADER, target_key),
+                        // 20% - builder IF construction sites exist
+                        () => constructionSites.length && droneService.createDrone(JOBS.BUILDER, target_key),
+                    ]);
+                }
+            },
+            run: function() {
+                // const drones = droneService.getDrones();
+                if (drones.length < DRONE_LIMIT / 2) {
+                    spawnModules.lowDroneCount();
+                } else {
+                    spawnModules.randomProduction();
+                }
+            }
         }
+
+        spawnModules.run();
 
         // todo: refresh creeps time; Dont do this for random spawns probably
         // todo: add logic to convert builders when buildings need work
+        // todo: should I actually treat mechanics as a sub-mode of builders? The job can exist and I can job manage? But I have been having issues with job management.
         // todo: assign mechanics when repairs are needed; might replace this idea with more random.
 
 
-        // less than 9 drones AND enough energy
-        if (drones.length <= DRONE_LIMIT && spawn.room.energyAvailable >= 550) {
-            utils.randexec([45, 35, 20], [
-                // 45% - harvester
-                () => droneService.createDrone(JOBS.HARVESTER, 'v5'),
-                // 35% - upgrader
-                () => droneService.createDrone(JOBS.UPGRADER, 'v5'),
-                // 20% - builder
-                () => droneService.createDrone(JOBS.BUILDER, 'v5'),
-            ]);
-            if (utils.roll() > 40) {
-                droneService.createDrone(JOBS.HARVESTER, 'v5');
-            } else {
-                droneService.createDrone(JOBS.UPGRADER, 'v5');
-            }
-        }
+        // const target_key = getKit(room.energyCapacityAvailable);
+        // // less than 9 drones AND enough energy
+        // if (drones.length <= DRONE_LIMIT && room.energyAvailable >= kits[target_key].cost) {
+        //     utils.randexec([45, 35, 20], [
+        //         // 45% - harvester
+        //         () => droneService.createDrone(JOBS.HARVESTER, target_key),
+        //         // 35% - upgrader
+        //         () => droneService.createDrone(JOBS.UPGRADER, target_key),
+        //         // 20% - builder
+        //         () => droneService.createDrone(JOBS.BUILDER, target_key),
+        //     ]);
+        // }
+
+        // todo: can I use this find(FIND_TOMBSTONES) to remove dead drones from memory?
     },
     run: function() {
         droneService.droneManager();
