@@ -4,6 +4,18 @@ const spawn = Game.spawns['spawn'];
 /**
  * Make updates to be able to run these tasks as its own system similar to drones. 
  */
+const tutorialService = {
+    getRandomSource: function(sources) {
+        const target = sources[utils.roll() < 50 ? 1 : 0];
+        return target.id;
+    },
+    creepIsFull: function(creep) {
+        return creep.store.getFreeCapacity() === 0;
+    },
+    run: function() {
+        
+    }
+}
 
 function getRandomSource(sources) {
     const target = sources[utils.roll() < 50 ? 1 : 0];
@@ -39,14 +51,16 @@ const roleHarvester = {
                 return creep.room.find(FIND_STRUCTURES, {
                     filter: (structure) => {
                         return (structure.structureType == STRUCTURE_EXTENSION ||
-                            structure.structureType == STRUCTURE_SPAWN ||
-                            structure.structureType == STRUCTURE_TOWER) &&
-                            structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+                                structure.structureType == STRUCTURE_SPAWN ||
+                                structure.structureType == STRUCTURE_TOWER ||
+                                structure.structureType == STRUCTURE_CONTAINER
+                            ) && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
                     }
                 });
             }
 
             var targets = findEmptyStorages();
+            console.log('targets', targets);
 
             if(targets.length > 0) {
                 if(creep.transfer(targets[0], RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
@@ -142,3 +156,4 @@ const roleBuilder = {
 module.exports = roleHarvester;
 module.exports = roleBuilder;
 module.exports = roleUpgrader;
+module.exports = tutorialService;

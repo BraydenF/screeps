@@ -1,6 +1,15 @@
 const utils = require('utils');
+const Queue = require('utils');
 
-const DRONE_LIMIT = 10;
+// todo: decide where to put this?
+Array.prototype.rand = function() {
+    console.log(this)
+    return this[Math.floor(Math.random()*this.length)];
+};
+
+// todo: I think we are in a bit of an energy shortage.
+
+const DRONE_LIMIT = 9;
 
 const MODES = {
     STANDBY: 'standby',
@@ -10,6 +19,9 @@ const MODES = {
     // todo: add other modes
 }
 
+
+// todo: probably about time to start introducing a miner and transport role into the system
+// todo: could update upgraders, builders, and mechanics to use stored energy rather than stuff in the spawn
 const JOBS = {
     HARVESTER: 'harvester',
     UPGRADER: 'upgrader',
@@ -17,6 +29,7 @@ const JOBS = {
     MECHANIC: 'mechanic',
     NONE: 'none',
 }
+// there was an enemy spawn event,might need to build offensive units sooner
 
 function getRandomSource(sources) {
     const target = sources[utils.roll() < 50 ? 1 : 0];
@@ -58,6 +71,14 @@ class Creep {
     clearMemory() {
         this.creep.memory = {};
     }
+}
+
+class Hydra extends Creep {
+    
+}
+
+class Roach extends Creep {
+
 }
 
 class Drone extends Creep {
@@ -102,8 +123,9 @@ class Drone extends Creep {
             filter: (structure) => {
                 return (structure.structureType == STRUCTURE_EXTENSION ||
                     structure.structureType == STRUCTURE_SPAWN ||
-                    structure.structureType == STRUCTURE_TOWER) &&
-                    structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+                    structure.structureType == STRUCTURE_TOWER ||
+                    structure.structureType == STRUCTURE_CONTAINER
+                    ) && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
             }
         });
     }
@@ -143,25 +165,73 @@ class Drone extends Creep {
             filter: object => object.hits < object.hitsMax
         });
         targets.sort((a,b) => a.hits - b.hits);
-        if(targets.length > 0) {
-            if(this.creep.repair(targets[0]) == ERR_NOT_IN_RANGE) {
+        if (targets.length > 0) {
+            if (this.creep.repair(targets[0]) == ERR_NOT_IN_RANGE) {
                 this.creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
             }
         }
     }
 
     harvest() {
-        let target = this.get('targetSource');
+        function getTarget(room) {
+            const sources = room.find(FIND_SOURCES);
+            const randomSource = sources.rand();
+            if (randomSource) {
+                return { room: room.name, _id: randomSource.id, obj: randomSource };
+            }
+            return null;
+        }
+
+        // create a _ service to manage where the drone is working (what source its targeting)
+        // Currently randomly assigns room sources. I want to add on sources in other rooms. This will require a room target I believe, until its claimed. 
+        // todo: move the target logic up a level, or create target service
+        // if (Memory._targets[''])
+        const targetableObject = Game.getObjectById(this.get('target'));
+
+        let target;
+        if (targetableObject) {
+            target = { _id: targetableObject.id, creep: null, room: targetableObject.room, obj: targetableObject };
+        }
+
         if (!target) {
-            target = getRandomSource(this.creep.room.find(FIND_SOURCES));
-            this.set('targetSource', target);
+            target = getTarget(this.creep.room);
+            console.log(Object.keys(target));
+            this.set('target', target._id);
         }
 
-        const targetSource = Game.getObjectById(target);
-
-        if (this.creep.harvest(targetSource) == ERR_NOT_IN_RANGE) {
-            this.creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } });
+        if (this.creep.harvest(target.obj) === ERR_NOT_IN_RANGE) {
+            const res = this.creep.moveTo(target.obj, {
+                visualizePathStyle: { stroke: '#ffaa00' },
+                // reusePath: 5, // default: 5
+            });
+            if (res !== 0) {
+                // https://docs.screeps.com/api/#Creep.moveTo
+                console.log(this.creep.name, 'moveTo', res);
+            }
         }
+    }
+
+    store() {
+        // console.log('who is calling this?', this.creep.name);
+        const containersWithEnergy = Game.spawns['spawn'].room.find(FIND_STRUCTURES, {
+            filter: (i) => i.structureType == STRUCTURE_CONTAINER &&
+                           i.store[RESOURCE_ENERGY] > 0
+        });
+        const emptyContainers = Game.spawns['spawn'].room.find(FIND_STRUCTURES, {
+            filter: (i) => i.structureType == STRUCTURE_CONTAINER &&
+                           i.store[RESOURCE_ENERGY] < i.store.getCapacity()
+        });
+
+        console.log(emptyContainers);
+
+        if (emptyContainers.length) {
+            console.log(this.creep.name, this.creep.moveTo(emptyContainers[0]));
+        }
+
+        // const targets = this.creep.room.find(FIND_MY_STRUCTURES);
+        // console.log('store', targets);
+
+
     }
 
     build() {
@@ -207,6 +277,52 @@ class Drone extends Creep {
                 }
 
                 return { mode: MODES.HARVEST, message: '🔄 harvest' };
+            }
+        }
+
+        // todo: I still need to expand energy harvesting out to another node. 
+        // todo: consider updating the spawn rates of drones to be based on number of nodes available. 
+
+        // todo: SCOUT WORK
+        // todo: we can just add what ever logic is needed here.
+
+        if (this.job === 'scout') {
+            this.set('targetSource', '5bbcadf79099fc012e638375');
+            const targetSource = this.get('targetSource');
+
+            // console.log(targetSource, Game.getObjectById(outerResource));
+            console.log(this.creep.name, '|', this.creep.harvest(targetSource), ERR_NOT_IN_RANGE);
+            // console.log(this.creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } }));
+
+            // if (this.creep.harvest(targetSource) == ERR_NOT_IN_RANGE) {
+            //     this.creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } });
+            // }
+
+            // console.log('here?', this.creep.room.name);
+
+            // const room = Game.spawns['spawn'].room;
+            const roomName = this.creep.room.name;
+            const exits = Game.map.describeExits(roomName);
+
+            // console.log(exits[TOP]);
+            // console.log(exits[RIGHT]);
+            // console.log(exits[BOTTOM]);
+            const leftRoomName = exits[LEFT];
+            // this.harvest();
+
+            /** todo
+             * think of this like a harvest/movement subsystem.
+             * If we can not target something we have the ID of, it is
+             * in a different room. Then I just need to dermine
+             * which direction the element is
+             * (if possible)
+             */
+            // note: loops to left room infinitely
+            const route = Game.map.findRoute(this.creep.room, leftRoomName);
+            if(route.length > 0) {
+                console.log('Now heading to room ' + route[0].room);
+                const exit = this.creep.pos.findClosestByRange(route[0].exit);
+                this.creep.moveTo(exit, { visualizePathStyle: { stroke: '#ffaa00' } });
             }
         }
 
@@ -270,13 +386,15 @@ class Drone extends Creep {
                 this.setMode('harvest', '🔄 harvest');
             }
             if (!this.isMode('transfer') && this.isEnergyFull()) {
-                this.setMode('transfer');
+                this.setMode('store');
             }
         }
     }
 
     processMode() {
         // actions[this.mode]();
+        // load
+        // unload
         if (this.mode === 'withdrawl') {
 			const targets = this.findResourceTargets(1);
 			if (targets.length) {
@@ -289,8 +407,20 @@ class Drone extends Creep {
 			} else {
 				return this.setMode('harvest', '🔄 harvest');
 			}
-		} else if (this.mode === 'transfer') {
+        } else if (this.mode === 'load') {
+            // todo: combine harvest and withdraw modes, then deprecate them.
+        } else if (this.mode === 'unload') {
+            // todo: combine store and transfer modes, then deprecate them.
+		} else if (this.mode === 'store') {
+            this.store();
+            // move to storage
+            // drop?
+            const targets = this.findEmptyStorages();
+            // console.log('targets', targets);
+            return this.transfer(targets[0]);
+        } else if (this.mode === 'transfer') {
 			const targets = this.findEmptyStorages();
+            console.log('targets', targets);
             return this.transfer(targets[0]);
 		} else if (this.isMode('harvest')) {
 		    // todo: check statu sof nodes to determine which node to harvest
@@ -303,9 +433,7 @@ class Drone extends Creep {
 		} else if (this.mode === 'repair') {
 			return this.repair();
 			// todo: nothing to repair? Become a an upgrader?
-		} else {
-            return this.harvest();
-        }
+		}
     }
 
     run () {
@@ -314,76 +442,101 @@ class Drone extends Creep {
     }
 }
 
-const kits = {
-    default: { parts: [WORK, CARRY, MOVE], cost: 200 },
-    eKit: { parts: [WORK, CARRY, CARRY, MOVE, MOVE], cost: 300 },
-    v2: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE], cost: 350 },
-    v3: { parts: [WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 400 },
-    v4: { parts: [WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 450 },
-    v5: { parts: [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
-    'v5.idk': { parts: [WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 550 },
-    v6: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE], cost: 650 },
-    v7: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE], cost: 750 },
-    v8: { parts: [WORK, WORK, WORK, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE], cost: 800 },
-};
-let foo;
 
-// w=1 e > 400 || w=
+function buyParts(budget, job) {
+    const isStandardJob = job === 'harvester' || job === 'upgrader' || job === 'builder';
+    const baseSetParts = [WORK, CARRY, CARRY, MOVE, MOVE, MOVE];
+    let remainingBudget = budget;
+    const reciept = { work: 0, carry: 0, move: 0, parts: [], cost: 0 };
 
-// first 200 is always [work, carry, move]
-// extra 50 is always move.
-// (rest / x) 
+    if (job === 'scout' && remainingBudget > 500) {
+        reciept.parts = [WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE];
+        // reciept.cost = 500;
+    }
 
-    function buyParts(budget) {
-        let remainingBudget = budget;
-        const reciept = { work: 0, carry: 0, move: 0 };
+    if (isStandardJob && remainingBudget >= 350) {
+        const baseSetCost = 350;
+        const baseSet = { workMultiplier: 1, carryMultiplier: 2, moveMultiplier: 3 } // cost: 350
+        const baseSetsCount = Math.floor(remainingBudget / baseSetCost);
 
-        // MVP parts
-        if (remainingBudget > 200) {
-            remainingBudget = remainingBudget - 200;
-            reciept.work++;
+        reciept.work = baseSetsCount * baseSet.workMultiplier;
+        reciept.carry = baseSetsCount * baseSet.carryMultiplier;
+        reciept.move = baseSetsCount * baseSet.moveMultiplier;
+
+        for (let i = 0; i < baseSetsCount; i++) {
+            for (let j = 0; j < baseSetParts.length; j++) {
+                reciept.parts.push(baseSetParts[j]);
+            }
+        }
+
+        remainingBudget = remainingBudget - (baseSetsCount * baseSetCost);
+
+        while(remainingBudget > 100) {
             reciept.carry++;
             reciept.move++;
+
+            reciept.parts.push[CARRY];
+            reciept.parts.push[MOVE];
+
+            remainingBudget = remainingBudget - 100;
         }
 
         // boosted model
-        if (remainingBudget % 100 === 50) {
+        if (remainingBudget >= 50) {
             reciept.move++;
+            reciept.parts.push[MOVE];
+            remainingBudget = remainingBudget - 50;
         }
+    } else if (remainingBudget >= 300) {
+            reciept.work = 1;
+            reciept.carry = 2;
+            reciept.move = 2;
 
-        // { work: 1, carry: 1, n: 1, move: 1.5 }
-        // Remaining budget to be spent as function of work and carry parts
-        // is it 2 carry parts per work?
-        // how many moves?
-
-        
-        // work - cost: 100, 
-        // carry - cost: 50, 
-        // move -  cost: 50, 
-
-        return reciept;
+            reciept.parts = [WORK, CARRY, CARRY, MOVE, MOVE];
+            remainingBudget = remainingBudget - 300;
     }
 
-foo = { work: 1, carry: 1, n: 2, move: 1 } // 200
-foo = { work: 1, carry: 2, n: 3, move: 2 } // 300
-foo = { work: 1, carry: 3, n: 3, move: 3 } // 350
-// foo = { work: 1, carry: 2, n: 3, move: 3 } // 400
-foo = { work: 2, carry: 2, n: 4, move: 3 } // 450
-foo = { work: 3, carry: 2, n: 5, move: 3 } // 550
-// foo = { work: 2, carry: 4, n: 6, move: 4 } // 550
-foo = { work: 3, carry: 3, n: 6, move: 4 } // 650
-foo = { work: 3, carry: 4, n: 7, move: 4 } // 750
-foo = { work: 3, carry: 4, n: 7, move: 5 } // 800
+    reciept.cost = budget - remainingBudget;
+    return reciept;
+}
 
+// todo: the idea of predefined queue existing for certain states. 
+// Could create a 'initial' spawn queue [H,H,H,U,B...]
+// Could create defensive or offensive spawn protocols
+// push to the queue in batches to ensure proper rate of jobs
+// push 2 builder to queue when a building is found (need better trigger)
+//
+const spawnQueueService = {
+    _save: function(queue) {
+        return Memory.spawns['spawn'].queue = spawnQueueService;
+    },
+    getQueue: function() {
+      return Memory.spawns['spawn'].queue;
+    },
+    run: function() {
+        const queue = getQueue();
+        // const spawnScoutParamEx = { job: 'scout', budget: 1050 };
+        // const spawnQueue = spawnQueueService._queue.peek();
+        if (spawnQueue.length) {
+            const { job, budget } = spawnQueue[0];
+            droneService.createDrone(job, budget);
+        }
 
+        const drone = spawnQueueService._queue.dequeue();
+
+        spawnQueueService._queue.length
+        // spawnQueueService._data = { queue: spawnQueue };
+        spawnQueueService._save();
+    },
+};
 
 const droneService = {
     Drone: Drone,
-    createDrone: function(job = 'harvester', kitName = 'default') {
-        // update to default to largest kit possible
-        const kit = typeof kits[kitName] !== 'undefined' ? kits[kitName] : kits.default;
-        console.log(`<b>Building drone:</b> ${job}:${kitName}` )
-        return Game.spawns['spawn'].createCreep(kit.parts, null, { role: 'drone', job: job });
+    createDrone: function(job = 'harvester', budget = 300) {
+        const reciept = buyParts(budget, job);
+        console.log(`<b>Building drone:</b> ${job}:${budget}` );
+        console.log(reciept.parts);
+        return Game.spawns['spawn'].createCreep(reciept.parts, null, { role: 'drone', job: job });
     },
     getDrones: function(job) {
         const drones = [];
@@ -402,45 +555,44 @@ const droneService = {
 
         return drones;
     },
-    getKit: function(energyLimit) {
-        return Object.keys(kits).reduce((targetKey, key) => {
-            if (kits[key].cost > kits[targetKey].cost && kits[key].cost < energyLimit) {
-                return key;
-            }
-            return targetKey;
-        }, 'default');
-    },
     droneManager: function () {
         const room = Game.spawns['spawn'].room;
         const drones = droneService.getDrones();
 
         const spawnModules = {
+            spawnQueue: function() {
+                spawnQueueService.run();
+            },
             lowDroneCount: function() {
-                const target_key = droneService.getKit(room.energyCapacityAvailable);
+                // todo: update spawn function to use the spawn queue system.
                 if (room.energyAvailable >= 300) {
-                    droneService.createDrone('harvester', target_key);
+                    const res = droneService.createDrone('harvester', 300);
+                    console.log(res);
                 }
             },
             randomProduction: function() {
+                // todo: update spawn function to use the spawn queue system.
                 const room = Game.spawns['spawn'].room;
-                // const drones = droneService.getDrones();
-                const target_key = droneService.getKit(room.energyCapacityAvailable);
+                const reciept = buyParts(room.energyCapacityAvailable);
                 const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
 
                 // less than 9 drones AND enough energy
-                if (drones.length <= DRONE_LIMIT && room.energyAvailable >= kits[target_key].cost) {
+                if (drones.length <= DRONE_LIMIT && room.energyAvailable >= room.energyCapacityAvailable) {
                     utils.randexec([45, 35, 20], [
                         // 40% - harvester
-                        () => droneService.createDrone(JOBS.HARVESTER, target_key),
+                        () => droneService.createDrone(JOBS.HARVESTER, room.energyAvailable),
                         // 40% - upgrader
-                        () => droneService.createDrone(JOBS.UPGRADER, target_key),
+                        () => droneService.createDrone(JOBS.UPGRADER, room.energyAvailable),
                         // 20% - builder IF construction sites exist
-                        () => constructionSites.length && droneService.createDrone(JOBS.BUILDER, target_key),
+                        () => constructionSites.length && droneService.createDrone(JOBS.BUILDER, room.energyAvailable),
                     ]);
                 }
             },
             run: function() {
                 // const drones = droneService.getDrones();
+                // if (spawnQueueService.droneInQueue()) {
+                    // spawnModules.spawnQueue();
+                // }
                 if (drones.length < DRONE_LIMIT / 2) {
                     spawnModules.lowDroneCount();
                 } else {
@@ -456,25 +608,17 @@ const droneService = {
         // todo: should I actually treat mechanics as a sub-mode of builders? The job can exist and I can job manage? But I have been having issues with job management.
         // todo: assign mechanics when repairs are needed; might replace this idea with more random.
 
-
-        // const target_key = getKit(room.energyCapacityAvailable);
-        // // less than 9 drones AND enough energy
-        // if (drones.length <= DRONE_LIMIT && room.energyAvailable >= kits[target_key].cost) {
-        //     utils.randexec([45, 35, 20], [
-        //         // 45% - harvester
-        //         () => droneService.createDrone(JOBS.HARVESTER, target_key),
-        //         // 35% - upgrader
-        //         () => droneService.createDrone(JOBS.UPGRADER, target_key),
-        //         // 20% - builder
-        //         () => droneService.createDrone(JOBS.BUILDER, target_key),
-        //     ]);
-        // }
-
         // todo: can I use this find(FIND_TOMBSTONES) to remove dead drones from memory?
     },
     run: function() {
         droneService.droneManager();
-        droneService.getDrones().forEach(drone => drone.run());
+        droneService.getDrones().forEach(drone => {
+            try {
+                drone.run();
+            } catch (e) {
+                console.log(drone.name, ':', e);
+            }
+        });
         // todo: how should I run the drone manager? Every 10 ticks?
     }
 };
