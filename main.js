@@ -1,25 +1,49 @@
+const config = require('config');
+const utils = require('utils');
 const creepService = require('creep.service');
-const consoleService = require('console.service');
+const droneService = require('drone.service');
 const towerService = require('tower.service');
+const spawnController = require('spawn.controller');
+const roomController = require('room.controller');
 
-// todo: create offensive creeps. 
+/**
+ * todo:
+ * - finish Miner system
+ * - create offensive creeps / automate defenses. 
+ * - Re organize the code, things are cluttered.
+ */
 // will need different types of creeps: support killers, medics, simple soldiers.
-
 
 const spawnsArray = [];
 
-// Game._spawns = {
-//     console.log('test');
-// }
-// Game.spawns.prototype = function() {
-//     // body... 
-//     console.log('test')
-//     console.log('this??', this);
-// };
+const consoleService = {
+    init: function() {
+    	// console commands
+        global.creepService = creepService;
+
+        // global.spawn = function(job, budget) {
+        //     spawnQueue.pushJob({ job, budget });
+        // }
+
+        // short cuts
+        global.createDrone = spawnController.createDrone;
+    },
+    run: function() {
+    	consoleService.init();
+    	if (Game.time % 5 === 0) {
+            console.log('*****************************************************************');
+            _.map(Game.spawns, (spawn) => {
+                console.log(`<b>${spawn.name}'s energy:</b> ${spawn.room.energyAvailable} / ${spawn.room.energyCapacityAvailable}`);
+                spawnController.spawnQueue.report();
+            });
+            console.log('*****************************************************************');
+    	}
+    }
+}
 
 // main logic loop
 module.exports.loop = function () {
-    consoleService.run();
+    // consoleService.run();
 
     function keys(obj) {
         return console.log('keys', Object.keys(obj));
@@ -27,12 +51,18 @@ module.exports.loop = function () {
 
     // todo: multi room loop will soon be needed
     for(var room_it in Game.rooms) {
-        const room = Game.rooms[room_it]
+        const room = Game.rooms[room_it];
         const spawn = room.find(FIND_MY_SPAWNS)[0];
     }
 
-    // todo: can I calculate the energy in/out rates?
-
-    towerService.run();
+    roomController.run();
+    //towerService.run();
     creepService.run();
+    // spawnController.run();
 }
+
+Array.prototype.rand = function() {
+    const index = Math.floor(Math.random()*this.length);
+    // console.log(`rand ${index} / this.length`);
+    return this[index];
+};
