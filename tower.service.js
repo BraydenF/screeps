@@ -50,7 +50,7 @@ const towerService = {
         const towers = towerService.getTowers();
         const tower = towers.length ? towers[0] : null;
 
-        if(tower) {
+        if (tower) {
             // todo: consider setting towers to keep an energy reserve for defence
             const closestDamagedStructure = tower.pos.findClosestByRange(FIND_STRUCTURES, {
                 filter: (structure) => structure.hits < structure.hitsMax && structure.hits < defaultConfig.min_wall
