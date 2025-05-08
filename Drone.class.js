@@ -4,371 +4,330 @@ const config = require('config');
 const { INITIAL_SPAWN, JOBS, DRONE_LIMIT, MODES } = config;
 
 /**
- * Performs `tasks` based on the Drones assigned `job`
+ * Drones perform `tasks` based on the assigned `job`
+ * Drones keep themselves alive by going to the spawner for repairs at 350 ticksToLive
  */
 class Drone extends BaseCreep {
-    constructor(creep, job) {
-      if (!creep) {
-          throw new Error('Must supply a creep');
-      }
+  static getDrones(job) {
+    const drones = [];
+    for(const name in Game.creeps) {
+      const creep = Game.creeps[name];
 
-    	super(creep);
-      const memory = creep.memory || {};
-      const sources = creep.room.find(FIND_SOURCES);
-
-      // pulls old job, new job can be passed to contrucor
-      this.set('job', job ? job : memory.job);
-      this.set('mode', memory.mode ? memory.mode : 'standby');
-      this.set('task', memory.task ? memory.task : 'standby');
-      this.set('targetSource', memory.targetSource);
-    }
-
-    findResourceTargets(resourceAmount = 0) {
-      return this.creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (
-            structure.structureType == STRUCTURE_EXTENSION ||
-            structure.structureType == STRUCTURE_SPAWN ||
-            structure.structureType == STRUCTURE_STORAGE
-          ) && structure.store[RESOURCE_ENERGY] >= resourceAmount
-        }
-      });
-    }
-
-    findEmptyStorages() {
-      return this.creep.room.find(FIND_STRUCTURES, {
-        filter: (structure) => {
-          return (
-            structure.structureType == STRUCTURE_SPAWN ||
-            structure.structureType == STRUCTURE_EXTENSION ||
-            structure.structureType == STRUCTURE_TOWER ||
-            structure.structureType == STRUCTURE_CONTAINER
-            ) && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-        }
-      });
-    }
-
-    dropAll() {
-        // drop all resources
-        for(const resourceType in this.creep.carry) {
-            this.creep.drop(resourceType);
-        }
-    }
-
-    pickup(target = null) {
-      if (!target) {
-        target = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
-      }
-
-      if (target) {
-          if(this.creep.pickup(target) == ERR_NOT_IN_RANGE) {
-              this.creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
+      if (creep.memory.role === 'drone') {
+        if (job) { // only displays drones of job
+          if (creep.memory.job === job) {
+              drones.push(new Drone(creep));
           }
+        } else { // displays all drones
+          drones.push(new Drone(creep));
+        }
+      }
+    }
+
+    return drones;
+  }
+
+  constructor(creep, job) {
+    if (!creep) {
+        throw new Error('Must supply a creep');
+    }
+
+  	super(creep);
+    const memory = creep.memory || {};
+    const sources = creep.room.find(FIND_SOURCES);
+
+    // pulls old job, new job can be passed to contrucor
+    this.set('job', memory.job ? memory.job : job);
+    this.set('homeRoom', memory.homeRoom ? memory.homeRoom : this.creep.findClosestByRange(FIND_MY_SPAWNS));
+  }
+
+  load(target = null) {
+    if (typeof target === 'string') target = Game.getObjectById(target);
+    const creepCapacity = this.creep.store.getCapacity();
+    const droppedResources = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
+
+    if (target) {
+      const status = this.withdraw(target);
+      if (status == ERR_INVALID_TARGET) this.set('target', null);
+      return status;
+    }
+
+    if (droppedResources) {
+      const piledResources = this.creep.room.find(FIND_DROPPED_RESOURCES, {
+        filter: (resource) => resource.amount >= creepCapacity,
+      });
+
+      if (piledResources.length) {
+        return this.pickup(piledResources[0]);
       } else {
-        this.creep.note = 'No resources to pickup.';
+        return this.pickup();
       }
     }
 
-    withdrawl(target) {
-    	if(this.creep.withdraw(target, RESOURCE_ENERGY) == ERR_NOT_IN_RANGE) {
-		    this.creep.moveTo(target, { visualizePathStyle: { stroke: '#ffffff' } });
-		  }
+    if (!target) {
+      // finds the Storage with enough energy
+      target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: (structure) => structure.structureType == STRUCTURE_STORAGE && structure.store[RESOURCE_ENERGY] >= creepCapacity
+      });
     }
 
-    load(target = null) {
-      const creepCapacity = this.creep.store.getCapacity();
-      const droppedResources = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
+    if (!target) {
+      // finds the closest spawn
+      target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+        filter: (structure) => (structure.structureType == STRUCTURE_SPAWN) && structure.store[RESOURCE_ENERGY] >= 50,
+      });
+    }
 
-      if (target) {
-        return this.withdrawl(target);
+    if (target) {
+      return this.withdraw(target);
+    }
+  }
+
+  unload(target = null) {
+    if (typeof target === 'string') target = Game.getObjectById(target);
+
+    if (!target) {
+      const targets = this.findEmptyStorages();
+      if (targets && targets[0]) target = targets[0];
+    }
+
+    if (!target) {
+      // the drone may have strayed out of the room
+      if (this.creep.room !== this.get('homeRoom')) {
+        this.moveToRoom(this.get('homeRoom'));
+      } else {
+        // moves to spawn for passive recharge and locality
+        this.moveTo(this.creep.room.spawn);
       }
+    }
 
-      if (droppedResources) {
-        const piledResources = this.creep.room.find(FIND_DROPPED_RESOURCES, {
-          filter: (resource) => resource.amount >= creepCapacity,
-        });
+    const result = this.transfer(target);
+    if (result === ERR_NOT_ENOUGH_RESOURCES || result === ERR_FULL || result === ERR_INVALID_TARGET) {
+      this.enterStandby();
+    }
 
-        if (piledResources.length) {
-          return this.pickup(piledResources[0]);
-        } else {
-          return this.pickup();
+    return result;
+  }
+
+  siege() {
+    const hostileCreep = this.creep.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
+    const warTargets = this.creep.pos.findClosestByRange(FIND_HOSTILE_STRUCTURES, {
+      filter: (struct) => {
+        console.log(struct);
+        return true;
+      }
+    });
+
+    let target = hostileCreep ? hostileCreep : warTargets;
+    const status = this.attack(target);
+    console.log('siege:status', status);
+    return status;
+  }
+
+  toString() {
+    return `{ name: ${this.name}, job: ${this.get('job')}, task: ${this.get('task')}}`;
+  }
+
+  processJob() {
+    this.job = this.get('job');
+    const spawn = this.creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+    const LOG = true;
+
+    // all drones will prioritize recharging if they have been tasked with doing so.
+    if (this.hasTask('recharge')) {
+      this.transfer(spawn, RESOURCE_ENERGY);
+      return;
+    } else {
+      // allows for a creep to finish deliving resources
+      if (this.creep.ticksToLive < 350) {
+        this.setTask('recharge', '❤️‍🩹');
+      } else {
+        if (this.creep.ticksToLive <= 500 && this.creep.pos.getRangeTo(spawn) <= 5) {
+          this.setTask('recharge', '❤️‍🩹');
         }
       }
-
-      if (!target) {
-        // finds the closest container with enough energy
-        target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: (structure) => structure.structureType == STRUCTURE_STORAGE && structure.store[RESOURCE_ENERGY] >= creepCapacity
-        });
-      }
-
-      if (!target) {
-        // finds the closest spawn or extension
-        target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: (structure) => (structure.structureType == STRUCTURE_SPAWN || structure.structureType ==  STRUCTURE_EXTENSION) && structure.store[RESOURCE_ENERGY] >= 50,
-        });
-      }
-
-      if (target) {
-        return this.withdrawl(target);
-      }
     }
 
-    unload(target = null) {
-      if (!target) {
-        target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: (structure) => (structure.structureType == STRUCTURE_SPAWN || structure.structureType ==  STRUCTURE_EXTENSION)
-            && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        });
-      }
-
-      if (!target) {
-        target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
-          filter: (structure) => structure.structureType == STRUCTURE_STORAGE && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
-        });
-      }
-
-      if (!target) {
-        const targets = this.findEmptyStorages();
-        if (targets && targets[0]) target = targets[0];
-      }
-
-      if (!target) {
-        throw ('No empty storage in room' + this.creep.room);
-      }
-
-      return this.transfer(target);
-    }
-
-    repair() {
-        const targets = this.creep.room.find(FIND_STRUCTURES, {
-            filter: object => object.hits < object.hitsMax
-        });
-        targets.sort((a,b) => a.hits - b.hits);
-        if (targets.length > 0) {
-            if (this.creep.repair(targets[0]) == ERR_NOT_IN_RANGE) {
-                this.creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
-            }
-        }
-    }
-
-    build() {
-        const targets = this.creep.room.find(FIND_CONSTRUCTION_SITES);
-
-    	// todo: how can we better handle the build order? Do we need a build queue?
-
-        if (targets.length) {
-            if (this.creep.build(targets[0]) == ERR_NOT_IN_RANGE) {
-                this.creep.moveTo(targets[0], { visualizePathStyle: { stroke: '#ffffff' } });
-            }
-        }
-    }
-
-    upgrade() {
-    	const controller = this.creep.room.controller;
-    	if (this.creep.upgradeController(controller) === ERR_NOT_IN_RANGE) {
-        this.creep.moveTo(controller, { visualizePathStyle: { stroke: '#ffffff' } });
-      }
-    }
-
-    recharge() {
-      // todo: get recharged by the spawn
-      // find nearest spawn  
-      // move to the spawn
-      const spawn = this.creep.pos.findClosestByRange(FIND_MY_SPAWNS);
-
-      const rechargeAttempt = spawn.renewCreep(this.creep);
-      console.log('renewCreep', rechargeAttempt);
-      if (rechargeAttempt === ERR_NOT_IN_RANGE) {
-        this.creep.moveTo(spawn, { visualizePathStyle: { stroke: '#ffffff' } });
-      } else if (rechargeAttempt === ERR_FULL) {
-        this.setTask('standby');
-      }
-    }
-
-    toString() {
-        return `{ name: ${this.name}, job: ${this.get('job')}, task: ${this.get('task')}}`;
-    }
-
-    processJob() {
-      this.job = this.get('job');
-
-      function withdrawlOrHarvest(obj) {
-          if (obj) {
-              const targets = obj.findResourceTargets(1);
-              if (targets[0].room.energyAvailable > 350) {
-                  return { mode: MODES.WITHDRAWL, message: '🔄 filling up!' };
-              }
-
-              return { mode: MODES.HARVEST, message: '🔄 harvest' };
-          }
-      }
-
-      // all drones will prioritize recharging if they have been tasked with doing so.
-      if (this.hasTask('recharge')) {
-        // task will remain unmodified.
-        return;
-      }
-
-      if (this.job === 'scout') {
-          this.set('targetSource', '5bbcadf79099fc012e638375');
-          const targetSource = this.get('targetSource');
-
-          // console.log(targetSource, Game.getObjectById(outerResource));
-          console.log(this.creep.name, '|', this.creep.harvest(targetSource), ERR_NOT_IN_RANGE);
-          // console.log(this.creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } }));
-
-          // if (this.creep.harvest(targetSource) == ERR_NOT_IN_RANGE) {
-          //     this.creep.moveTo(targetSource, { visualizePathStyle: { stroke: '#ffaa00' } });
-          // }
-
-          // console.log('here?', this.creep.room.name);
-
-          // const room = Game.spawns['spawn'].room;
-          const roomName = this.creep.room.name;
-          const exits = Game.map.describeExits(roomName);
-
-          // console.log(exits[TOP]);
-          // console.log(exits[RIGHT]);
-          // console.log(exits[BOTTOM]);
-          const leftRoomName = exits[LEFT];
-          // this.harvest();
-
-          /** todo
-           * think of this like a harvest/movement subsystem.
-           * If we can not target something we have the ID of, it is
-           * in a different room. Then I just need to dermine
-           * which direction the element is
-           * (if possible)
-           */
-          // note: loops to left room infinitely
-          const route = Game.map.findRoute(this.creep.room, leftRoomName);
-          if(route.length > 0) {
-              console.log('Now heading to room ' + route[0].room);
-              const exit = this.creep.pos.findClosestByRange(route[0].exit);
-              this.creep.moveTo(exit, { visualizePathStyle: { stroke: '#ffaa00' } });
-          }
-      }
-
-      else if (this.job === 'upgrader') {
-          if (this.isStandby()) {
-              this.setTask('upgrade');
-          }
-
-          if (this.hasTask('upgrade') && this.isEnergyEmpty()) {
-              // const { mode, message } = (this);
-              this.setTask('load');
-          } else if (!this.hasTask('upgrade') && this.isEnergyFull()) {
-              this.setTask('upgrade', '⚡ upgrade');
-          }
-      }
-      else if (this.job === 'builder') {
-          // job change condition: nothing to build
-          const targets = this.creep.room.find(FIND_CONSTRUCTION_SITES);
-          if (!targets.length) {
-            this.set('job', JOBS.UPGRADER);
-          }
-
-          if (this.isStandby()) {
-            this.setTask('build');
-          }
-  
-          if (this.hasTask('build') && this.isEnergyEmpty()) {
-            const containers = this.creep.room.find(FIND_STRUCTURES, { filter: (structure) => structure.structureType == STRUCTURE_STORAGE && structure.store[RESOURCE_ENERGY] >= 1 });
-            if (containers) {
-              this.setTask('load');
-            } else {
-              const { mode, message } = withdrawlOrHarvest(this);
-              this.setTask(mode, message);
-            }
-          } else if (!this.hasTask('build') && this.isEnergyFull()) {
-              this.setTask('build', '🚧 build');
-          }
-  	  }
-      else if (this.job === JOBS.MECHANIC) {
-          // job change condition: nothing to repair
-          const targets = this.creep.room.find(FIND_STRUCTURES, {
-            filter: object => object.hits < object.hitsMax
-          });
-          if (!targets.length) {
-            this.set('job', JOBS.HARVESTER);
-          }
-
-          if (this.isStandby()) {
-            this.setTask('repair', '⚡ repair');
-          }
-          if (!this.hasTask('repair') && this.isEnergyEmpty()) {
-            // const { mode, message } = withdrawlOrHarvest(this);
-            this.setTask('harvest', '🔄 harvest');
-          }
-          if (!this.hasTask('repair') && this.isEnergyFull()) {
-            this.setTask('repair', '⚡ repair');
-          }
-      }
-
-      else if (this.job === 'harvester') {
+    // console.log(this.creep.name, this.get('task'));
+    switch(this.get('job')) {
+      case 'mechanic':
+      case 'drone':
         if (this.isStandby()) {
-          this.setTask('harvest');
-        }
-        else if (!this.hasTask('harvest') && this.isEnergyEmpty()) {
-          this.setTask('harvest', '🔄 harvest');
-        }
-        else if (!this.hasTask('transfer') && this.isEnergyFull()) {
-          this.setTask('unload');
-        }
-      }
-
-      else if (this.job === 'miner') {
-        if (this.isStandby()) {
-          this.setTask('harvest');
-        }
-        if (!this.hasTask('harvest') && this.isEnergyEmpty()) {
-          this.setTask('harvest', '🔄 harvest');
-        }
-        else if (!this.hasTask('transfer') && this.isEnergyFull()) {
-          this.setTask('unload');
-        }
-      }
-
-      else if (this.job === 'hauler') {
-          if (this.isStandby() || this.hasTask('unload') && this.isEnergyEmpty()) {
+          if (this.isEnergyEmpty()) {
             const droppedResources = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
-            if (droppedResources) {
-              this.setTask('load');
-            } else {
-              this.setTask('standby');
-            }
-          }
-          else if (!this.hasTask('transfer') && this.isEnergyFull()) {
-              this.setTask('unload');
-          }
-      }
-    }
 
-    run () {
+            if (droppedResources) {
+              this.setTask('pickup');
+            } else {
+              this.setTask('harvest', '🔄 harvest');
+            }
+          } else {
+            const towers = this.creep.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
+            const repairTargets = this.creep.room.find(FIND_MY_STRUCTURES, {
+              filter: object => (object.hits / object.hitsMax) <= 0.25 && object.hits <= 25000,
+            });
+            const buildTargets = this.creep.room.find(FIND_CONSTRUCTION_SITES);
+            const upgrader = this.creep.room.find(FIND_MY_CREEPS, { filter: (creep) => creep.memory.job !== 'upgrader' });
+            console.log('drone');
+            if (buildTargets && buildTargets.length) {
+              if (LOG) console.log('build', buildTargets[0]);
+              this.setTask('build', '🚧 build');
+            }
+            else if (!towers && repairTargets && repairTargets.length) {
+              if (LOG) console.log('repair', repairTargets[0]);
+              this.setTask('repair', '⚡ repair');
+            }
+            else if (towers.length && towers[0].store.getFreeCapacity(RESOURCE_ENERGY) > 50) {
+              if (LOG) console.log('unload');
+              this.set('target', towers[0].id);
+              this.setTask('unload');
+            }
+            else if (this.creep.room.controller.level <= 3) {
+              if (LOG) console.log('upgrade');
+              this.setTask('upgrade');
+            }
+            else if (spawn && spawn.store.getUsedCapacity(RESOURCE_ENERGY) < 300) {
+              if (LOG) console.log('unload2');
+              this.setTask('unload');
+            }
+
+            // else if (!this.get(flag)) {
+            //   this.moveToRoom(this.get('homeRoom'));
+            // }
+          }
+        } else {
+          if (this.hasTask('load') && this.isEnergyFull()) {
+            this.setTask('standby');
+          }
+          else if ((this.hasTask('repair') || this.hasTask('build') || this.hasTask('unload')) && this.isEnergyEmpty()) {
+            this.setTask('standby');
+          }
+        }
+        break;
+
+      case 'upgrader':
+        if (this.isStandby()) {
+          if (!this.isEnergyFull()) {
+            const nearestContainer = this.creep.room.controller.pos.findClosestByPath(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_CONTAINER } });
+            if (nearestContainer) {
+              this.set('target', nearestContainer.id);
+            }
+            this.setTask('load', '🚚');
+          } else if (this.isEnergyFull()) {
+            this.setTask('upgrade', '⚡ upgrade');
+          }
+        }
+        break;
+
+      case 'miner':
+        if (this.isStandby()) {
+          if (this.isEnergyEmpty()) {
+            this.setTask('harvest', '🔄 harvest');
+          } else {
+            this.setTask('unload');
+          }
+        }
+        break;
+
+      case 'hauler':
+        if (this.isStandby() && !this.isEnergyFull()) {
+          const source = Game.getObjectById(this.get('source'));
+          if (source) {
+            const droppedResources = source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
+            if (droppedResources) this.set('target', droppedResources);
+          }
+          this.setTask('pickup');
+        } else if (!this.hasTask('unload') && this.isEnergyFull()) {
+          this.setTask('unload');
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  /**
+   * All tasks should run until they shift the bot into standby
+   */
+  run() {
+    try {
       this.processJob();
+      let target = this.get('target');
+      const flag = this.getFlag();
 
       switch (this.task) {
-        case 'load':
-          let target = this.get('target');
-          if (target) {
-            const targets = this.creep.room.find(FIND_STRUCTURES, {
-              filter: (structure) => {
-                return structure.structureType == STRUCTURE_CONTAINER && structure.id === target;
-              }
-            });
-            if (targets && targets[0]) target = targets[0];
-          }
+        case 'pickup':
+          const targetedResources = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, { filter: { id: target }});
+          const source = Game.getObjectById(this.get('source'));
+          const energyNearSource = source && source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
 
+          if (targetedResources) {
+            this.pickup(targetedResources);
+          } else if (energyNearSource && energyNearSource.pos.isNearTo(source)) {
+            this.pickup(energyNearSource);
+          } else {
+            this.pickup();
+          }
+          
+          break;
+
+        case 'load':
           this.load(target);
           break;
 
         case 'unload':
-          this.unload();
+          if (!target) {
+            target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+              filter: (structure) => (structure.structureType == STRUCTURE_SPAWN && structure.store.getFreeCapacity(RESOURCE_ENERGY) >= 50)
+                || (structure.structureType === STRUCTURE_EXTENSION && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0)
+            });
+          }
+
+          if (!target) {
+            target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+              filter: (structure) => structure.structureType == STRUCTURE_TOWER && structure.store.getUsedCapacity(RESOURCE_ENERGY) < 500
+            });
+          }
+
+          if (!target) {
+            target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+              filter: (structure) => structure.structureType == STRUCTURE_CONTAINER && structure.store.getUsedCapacity(RESOURCE_ENERGY) <= 800
+            });
+          }
+
+          if (!target) {
+            // delivers resources to a worker in need
+            target = this.creep.pos.findClosestByPath(FIND_MY_CREEPS, {
+              filter: (creep) => {
+                const loadingWorker = creep.memory.job !== 'hauler' && (creep.memory.task === 'load' || creep.memory.task === 'pickup' || creep.memory.task === 'harvest');
+                const assistingUpgrader = creep.memory.job === 'drone' && creep.memory.task === 'upgrade';
+                return loadingWorker || assistingUpgrader;
+              },
+            });
+          }
+
+          if (!target) {
+            target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
+              filter: (structure) => structure.structureType == STRUCTURE_STORAGE && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+            });
+          }
+
+          this.unload(target);
+          break;
+        case 'drop': 
+          this.dropAll();
           break;
 
         case 'harvest':
-          this.harvest();
+          if (this.creep.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+            this.setTask('standby');
+            break;
+          }
+
+          if (this)
+          // attempts to target the assigned Source
+          this.harvest(this.get('source'));
           break;
 
         case 'build':
@@ -387,12 +346,50 @@ class Drone extends BaseCreep {
           this.recharge();
           break;
 
+          /**
+           * What would a travel function look like?
+           * - The ability to set a destination
+           * - switches to an action other than standby
+           */
+          this.get('travelPlan');
+          const travelPlan = {
+            desitation: '',
+            task: '',
+          }
+          this.travel()
+          break;
+
+        case 'attack':
+          this.siege();
+          break;
+
+        case 'claim':
+          this.claim();
+          break;
+
+        case 'flag':
+          if (flag) {
+            const status = this.moveTo(flag);
+            const distanceToFlag = this.creep.pos.getRangeTo(flag);
+            if (distanceToFlag <= 3) {
+              if (flag.memory.task) this.setTask(flag.memory.task);
+              if (flag.memory.source) this.set('source', flag.memory.source);
+            }
+          } else {
+            this.set('flag', null);
+            this.setTask('standby');
+          }
+          break;
+
         case 'standby':
         default:
           // do nothing
           break;
       }
+    } catch (e) {
+      console.log(this.creep.name,':', e);
     }
+  }
 }
 
 module.exports = Drone;

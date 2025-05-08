@@ -1,21 +1,14 @@
 const config = require('config');
 const utils = require('utils');
 const creepService = require('creep.service');
-const droneService = require('drone.service');
-const towerService = require('tower.service');
-const spawnController = require('spawn.controller');
-const roomController = require('room.controller');
+const Hive = require('Hive');
+const Drone = require('Drone.class');
 
 /**
  * todo:
- * - finish Miner system
  * - create offensive creeps / automate defenses. 
  * - Re organize the code, things are cluttered.
  */
-// will need different types of creeps: support killers, medics, simple soldiers.
-
-const spawnsArray = [];
-
 const consoleService = {
     init: function() {
     	// console commands
@@ -26,7 +19,7 @@ const consoleService = {
         // }
 
         // short cuts
-        global.createDrone = spawnController.createDrone;
+        // global.createDrone = spawnController.createDrone;
     },
     run: function() {
     	consoleService.init();
@@ -34,7 +27,7 @@ const consoleService = {
             console.log('*****************************************************************');
             _.map(Game.spawns, (spawn) => {
                 console.log(`<b>${spawn.name}'s energy:</b> ${spawn.room.energyAvailable} / ${spawn.room.energyCapacityAvailable}`);
-                spawnController.spawnQueue.report();
+                // spawnController.spawnQueue.report();
             });
             console.log('*****************************************************************');
     	}
@@ -43,22 +36,35 @@ const consoleService = {
 
 // main logic loop
 module.exports.loop = function () {
-    // consoleService.run();
+  consoleService.run();
 
-    function keys(obj) {
-        return console.log('keys', Object.keys(obj));
-    };
+  function keys(obj) {
+    return console.log('keys', Object.keys(obj));
+  };
 
-    // todo: multi room loop will soon be needed
-    for(var room_it in Game.rooms) {
-        const room = Game.rooms[room_it];
-        const spawn = room.find(FIND_MY_SPAWNS)[0];
-    }
+  // todo: multi room loop will soon be needed
+  for (var room_it in Game.rooms) {
+    const room = Game.rooms[room_it];
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+  }
 
-    roomController.run();
-    //towerService.run();
-    creepService.run();
-    // spawnController.run();
+  try {
+    const hive1 = new Hive('Spawn1');
+    hive1.run();
+  } catch (e) {
+    console.log('hive1:', e.message);
+  }
+
+  try {
+    const hive2 = new Hive('Spawn2');
+    hive2.run();
+  } catch (e) {
+    console.log('hive2:', e.message);
+  }
+
+  Drone.getDrones().forEach(drone => drone.run());
+
+  creepService.run();
 }
 
 Array.prototype.rand = function() {
