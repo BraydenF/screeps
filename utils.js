@@ -99,4 +99,55 @@ const utils = {
     Queue,
 };
 
+/** Test code that has been deprecated, wanted to keep the structure and basic idea */
+class MiningTeam {
+  constructor(spawn, source) {
+    this.key = `miningTeam-${source}`;
+    if (!Memory[this.key]) {
+      Memory[this.key] = { source: source, miner: null, haulers: [] }; 
+    }
+
+    this.spawn = spawn;
+    this.source = source;
+    this.memory = Memory.rooms[this.key];
+
+    const miners = spawn.room.find(FIND_MY_CREEPS, {
+      filter: (creep) => {
+        return creep.memory.source === source && creep.memory.job === 'miner';
+    }});
+
+    if (miners && miners.length) {
+      this.miner = miners[0];
+    }
+
+    const haulers = spawn.room.find(FIND_MY_CREEPS, {
+      filter: { memory: { source: source, job: 'hauler' } },
+    });
+
+    if (haulers && haulers.length) {
+      this.haulers = haulers;
+    }
+  }
+
+  run() {
+    if (Array.isArray(this.haulers)) {
+      this.haulers.forEach((hauler) => {
+        // find dropped Resources nearest the Source
+        const source = Game.getObjectById(hauler.memory.source);
+
+        if (hauler.memory.task === 'load' || hauler.memory.task === 'pickup') {
+          const droppedResources = source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
+
+          if (droppedResources) {
+            // targets the dropped resources closest to the deposit
+            hauler.memory.target = droppedResources.id;
+          }
+        } else if (hauler.memory.task === 'unload') {
+          // add special target rules
+        }
+      });
+    }
+  }
+}
+
 module.exports = utils;

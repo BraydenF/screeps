@@ -1,99 +1,12 @@
 const config = require('config');
 const droneService = require('drone.service');
-
-const { INITIAL_SPAWN } = config;
-
-class MiningTeam {
-  constructor(spawn, target = null) {
-    if (!Memory.miningTeam) {
-      Memory.miningTeam = { target: target, miner: null, haulers: [] }; 
-    }
-
-    this.spawn = spawn;
-    this.memory = Memory.miningTeam;
-  }
-
-  get(key) {
-    return this.memory[key];
-  }
-
-  set(key, value) {
-    this.memory[key] = value;
-  }
-
-  run() {
-    this.handleMiner();
-    this.handleHaulers();
-  }
-
-  spawnMiner() {
-    if (!this.spawn.spawning && this.spawn.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-      const result = droneService.createDrone('miner', this.spawn.room.energyCapacityAvailable);
-      if (result.status == OK) {
-        this.setMiner('miner', result.name);
-        Memory.miningTeam.miner = result.name;
-      }
-    }
-  }
-
-  spawnHauler() {
-    if (!this.spawn.spawning && this.spawn.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-      const result = droneService.createDrone('hauler', this.spawn.room.energyCapacityAvailable);
-      if (result.status == OK) {
-        const updatedHaulers = this.get('haulers').push(result.name);
-        this.set('haulers', updatedHaulers);
-        Memory.miningTeam.haulers = updatedHaulers;
-      }
-    }
-  }
-
-  handleMiner() {
-    const miner = this.spawn.room.find(FIND_MY_CREEPS, { filter: (creep) => creep.name == this.miner });
-
-    if (this.miner && miner && miner[0]) {
-      const memory = Memory.creeps[this.miner];
-
-      if (miner && miner[0]) {
-        if (memory.target != this.target) {
-          memory.target = this.target;
-        }
-
-        if (miner[0].ticksToLive <= 500) {
-          // enter repair mode
-          miner[0].memory.task = 'recharge';
-        }
-      }
-    }
-  }
-
-  handleHauler(haulerName) {
-    const hauler = this.spawn.room.find(FIND_MY_CREEPS, {
-      filter: (creep) => creep.name == haulerName
-    });
-
-    if (hauler && hauler[0]) {
-      // manage the hauler
-      const memory = Memory.creeps[haulerName];
-      if (hauler[0].ticksToLive <= 500) {
-        // enter repair mode
-        hauler[0].memory.task = 'recharge';
-      }
-    }
-  }
-
-  handleHaulers() {
-    for (let haulerName of this.get('haulers')) {
-      this.handleHauler(haulerName);
-    }
-  }
-}
-
+const towerService = require('tower.service');
 
 const roomController = {
   /**
    * Handles logic for spawning units into the initial room
    */
-  basicSpawn: function (room) {
+  basicSpawn: function(room) {
     const sources = room.find(FIND_SOURCES);
     let creepToBuild;
 
@@ -121,33 +34,8 @@ const roomController = {
       droneService.createDrone(creepToBuild);
     }
   },
-  manageDroneTeam: function(room) {
-    // todo: spawn and manage creeps building, upgrading, and repairing.
-    // One upgrader should be active at a time, they can be assigned a container as their primary source of enery
-  },
-  handleInitialRoom: function() {
-    const spawn = Game.spawns[INITIAL_SPAWN];
-    const room = spawn.room;
-
-    // roomController.basicSpawn(room);
-    const miningTeam = new MiningTeam(spawn, '5bbcac6b9099fc012e6356cb');
-    miningTeam.run();
-
-    // miningTeam.spawnMiner();
-    // miningTeam.spawnHauler();
-
-
-    // const target = spawn.pos.findClosestByPath(FIND_MY_CREEPS);
-    // console.log(target.name);
-    // spawn.renewCreep(target);
-
-    // droneService.createDrone('harvester');
-    // droneService.createDrone('builder');
-    // droneService.createDrone('upgrader', 550);
-
-  },
 	run: function(room) {
-    roomController.handleInitialRoom();
+    // todo: determine if this file is still useful
 	}
 };
 

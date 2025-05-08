@@ -1,5 +1,4 @@
 const config = require('config');
-const droneService = require('drone.service');
 const utils = require('utils');
 
 const TARGET_ROLE_COUNT = {
@@ -62,13 +61,12 @@ const creepService = {
 
     // processes jobs for each worker; counts currently assigned roles
     creepTracker.run();
-    droneService.run();
 
     // role service
-    for(const name in Game.creeps) {
+    for (const name in Game.creeps) {
       const creep = Game.creeps[name];
 
-      if (utils.roll() > 97) {
+      if (utils.roll() > 96) {
         creep.say(utils.randomSay());
       }
     }
