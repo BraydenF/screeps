@@ -9,7 +9,7 @@ const config = {
     MODES: {
         STANDBY: 'standby',
         HARVEST: 'harvest',
-        WITHDRAWL: 'withdrawl',
+        WITHDRAW: 'withdraw',
         UPGRADE: 'upgrade',
     },
     JOBS: {
@@ -21,6 +21,7 @@ const config = {
         HAULER: 'hauler',
         NONE: 'none',
     },
+    roomsToAvoid: ['W9N451', 'W7N49', 'W9N49', 'W9N53'],
 };
 
 Game.config = config;

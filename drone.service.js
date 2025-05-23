@@ -11,6 +11,38 @@ const OUTFITS = {
   FLAGBEARER: [CLAIM, MOVE], // 650
 }
 
+/**
+ * 
+ * { work: 5, move: 2, carry: 0, cost: 600 }
+ * { work: 5, move: 3, carry: 3, cost: 800 }
+ * { work: 10, move: 6, carry: 6, cost: 1600 }
+ */
+
+const PART_PRIORITY = [TOUGH, WORK, ATTACK, CARRY, MOVE, RANGED_ATTACK, HEAL, CLAIM]
+
+function orderParts(reciept) {
+  const parts = [];
+  PART_PRIORITY.forEach((part) => {
+    for (let x = 0; x <= reciept[part]; x++) {
+      parts.push(part);
+    }
+  });
+  return parts;
+}
+
+function getPartsArray(cart) {
+  const parts = [];
+  const keys = Object.keys(cart).forEach(part => {
+    console.log(part, cart[part]);
+
+  });
+
+  return parts;
+}
+
+/**
+ * todo: update the logic to use the reciept to track the parts until the array is built based on part priority order.
+ */
 function buyParts(budget, job) {
   const isStandardJob = job === 'drone';
   let remainingBudget = budget;
@@ -18,13 +50,17 @@ function buyParts(budget, job) {
 
   if (job === 'scout' && remainingBudget > 500) {
     reciept.parts = OUTFITS.SCOUT;
-    // reciept.cost = 500;
+    remainingBudget = remainingBudget - 50;
+  }
+  else if (job === 'flagbearer') {
+    reciept.parts = OUTFITS.FLAGBEARER;
+    remainingBudget = remainingBudget - 650;
   }
   else if (job === 'miner' && remainingBudget >= 250) {
     reciept.parts = OUTFITS.MINER;
     remainingBudget = remainingBudget - 250;
 
-    while(remainingBudget >= 100 && reciept.parts.length <= 5) {
+    while (remainingBudget >= 100 && reciept.work <= 7) {
       reciept.work++;
       reciept.parts.push(WORK);
       remainingBudget = remainingBudget - 100;
@@ -34,6 +70,16 @@ function buyParts(budget, job) {
       reciept.move++;
       reciept.parts.push(MOVE);
       remainingBudget = remainingBudget - 50;
+    }
+
+    while(remainingBudget >= 100) {
+      reciept.carry++;
+      reciept.move++;
+
+      reciept.parts.push(CARRY);
+      reciept.parts.push(MOVE);
+
+      remainingBudget = remainingBudget - 100;
     }
   }
   else if (job === 'upgrader' && remainingBudget >= 300) {
@@ -51,11 +97,18 @@ function buyParts(budget, job) {
       reciept.parts.push(MOVE);
       remainingBudget = remainingBudget - 50;
     }
+
+    if (remainingBudget >= 50) {
+      reciept.carry++;
+      reciept.parts.push(CARRY);
+      remainingBudget = remainingBudget - 50;
+    }
   }
   else if (job === 'hauler' && remainingBudget >= 300) {
     reciept.parts = OUTFITS.HAULER;
     remainingBudget = remainingBudget - 300;
 
+    console.log('remainingBudget', remainingBudget);
     while(remainingBudget >= 100) {
       reciept.carry++;
       reciept.move++;
@@ -63,6 +116,7 @@ function buyParts(budget, job) {
       reciept.parts.push(CARRY);
       reciept.parts.push(MOVE);
 
+    console.log('remainingBudget', remainingBudget);
       remainingBudget = remainingBudget - 100;
     }
 
@@ -121,8 +175,30 @@ function buyParts(budget, job) {
 }
 
 const droneService = {
-  createDrone: function(job = 'harvester', budget = 300) {
-    const spawn = Game.spawns[false ? 'Spawn1' : 'Spawn2'];
+  createDroneFactory: function(spawn) {
+    if (typeof spawn === 'string') spawn = Game.spawns[spawn];
+
+    return function(job = 'drone', budget = 300) {
+      const name = `${job}-${Game.time}-chan`;
+      let reciept = {};
+      if (typeof budget === 'number') reciept = buyParts(budget, job);
+      else if (Array.isArray(budget)) reciept = { parts: budget };
+
+      // reciept.parts = [MOVE];
+      let status = spawn.spawnCreep(reciept.parts, name, { dryRun: true });
+      console.log(reciept.cost, reciept.parts.toString(), status);
+
+      if (status === OK) {
+        status = spawn.createCreep(reciept.parts, name, { role: 'drone', job: job });
+        console.log(`<b>Building Drone:</b> ${job}:${budget}`);
+        console.log('Parts:', reciept.parts);
+      }
+
+      return { status: status, name: status === OK ? name : null };
+    }
+  },
+  createDrone: function(job = 'drone', budget = 300, memory = {}) {
+    const spawn = Game.spawns[true ? 'Spawn1' : 'Spawn2'];
     const name = `${job}-${Game.time}-chan`;
     const reciept = buyParts(budget, job);
 
@@ -130,44 +206,13 @@ const droneService = {
     let status = spawn.spawnCreep(reciept.parts, name, { dryRun: true });
     console.log(reciept.cost, reciept.parts.toString(), status);
 
-    if (status === 0) {
-      status = spawn.createCreep(reciept.parts, name, { role: 'drone', job: job });
+    if (status === OK) {
+      status = spawn.createCreep(reciept.parts, name, { role: 'drone', job: job, ...memory });
       console.log(`<b>Building drone:</b> ${job}:${budget}`);
       console.log(reciept.parts);
     }
-    return { status: status, name: status == 0 ? name : null };
+    return { status: status, name: status === OK ? name : null };
   },
-  // getDrones: function(job) {
-  //     const drones = [];
-  //     for(const name in Game.creeps) {
-  //       const creep = Game.creeps[name];
-
-  //       if (creep.memory.role === 'drone') {
-  //         if (job) { // only displays drones of job
-  //           if (creep.memory.job === job) {
-  //               drones.push(new Drone(creep));
-  //           }
-  //         } else { // displays all drones
-  //           drones.push(new Drone(creep));
-  //         }
-  //       }
-  //     }
-
-  //     return drones;
-  // },
-  // run: function() {
-  //   global.createDrone = droneService.createDrone;
-  //   // todo: consider just moving this to main
-  //   //  the file can be converted to just a drone spawning service or merged with the spawn.controller
-  //   droneService.getDrones().forEach(drone => {
-  //     try {
-  //       drone.run();
-  //     } catch (e) {
-  //       console.log(drone.name,':', e);
-  //       // throw e;
-  //     }
-  //   });
-  // }
 };
 
 module.exports = droneService;
