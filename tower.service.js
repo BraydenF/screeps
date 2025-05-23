@@ -1,7 +1,7 @@
 // tower management system
 const spawn = Game.spawns['spawn'];
 const defaultTowerConfig = {
-  min_wall: 15500,
+  min_wall: 21500,
 }
 
 // todo: move this note to somewhere it makes a bit more sense
@@ -23,6 +23,11 @@ const towerService = {
     return spawn.room.find(FIND_MY_STRUCTURES, {
       filter: { structureType: STRUCTURE_TOWER }
     });
+  },
+  getHostileTarget: function() {
+    const closestHostile = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
+    // todo: target healers first
+    return closestHostile;
   },
   getEnergyStatus: function(tower) {
       let status;
@@ -48,7 +53,7 @@ const towerService = {
         });
 
         if (hauler) {
-          hauler.memory.target = towers.id;
+          hauler.memory.target = tower.id;
           hive.set(`towerHauler-${tower.id}`, hauler.id);
           console.log(`tower-${tower.id} enlisted ${hauler.name} for duty!`);
         }
@@ -58,8 +63,8 @@ const towerService = {
       const hauler = Game.getObjectById(towerHauler);
 
       if (hauler.memory.task !== 'unload') {
-        hive.set('towerHauler', null);
-        console.log('hauler released');
+        hive.set(`towerHauler-${tower.id}`, null);
+        console.log(`${hauler.name} released`);
       }
     }
 

@@ -14,35 +14,39 @@ const emojis = [
 ];
 
 class Queue {
-    constructor() {
-        this.elements = {};
-        this.head = 0;
-        this.tail = 0;
+    constructor(items = []) {
+        this.items = items;
     }
     enqueue(element) {
-        this.elements[this.tail] = element;
-        this.tail++;
+        this.items.push(element); 
+    }
+    enQ(element) {
+        return this.enqueue(element);
     }
     dequeue() {
-        const item = this.elements[this.head];
-        delete this.elements[this.head];
-        this.head++;
-        return item;
+        return this.isEmpty ? undefined : this.items.shift();
+    }
+    deQ() {
+        return this.dequeue();
     }
     peek() {
-        return this.elements[this.head];
+        return this.isEmpty ? undefined : this.items[0];
     }
     get length() {
-        return this.tail - this.head;
+        return this.items.length;
     }
     get isEmpty() {
-        return this.length === 0;
+        return this.items.length === 0;
     }
 }
+
+global.Queue = Queue;
 
 function roll() {
     return Math.floor(Math.random() * 100);
 }
+
+global.roll = roll;
 
 const utils = {
     findResourceTargets(creep, resourceAmount = 0) {
@@ -98,6 +102,18 @@ const utils = {
     },
     Queue,
 };
+
+Array.prototype.rand = function() {
+    const index = Math.floor(Math.random()*this.length);
+    // console.log(`rand ${index} / this.length`);
+    return this[index];
+};
+
+// performs the provided function on the first element of the array if it exists
+Array.prototype.onFirst = function(func) {
+  const first = this.length && this[0];
+  if (func && first) return func(first);
+}
 
 /** Test code that has been deprecated, wanted to keep the structure and basic idea */
 class MiningTeam {

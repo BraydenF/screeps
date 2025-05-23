@@ -1,27 +1,10 @@
 const config = require('config');
 const utils = require('utils');
 
-const TARGET_ROLE_COUNT = {
-  HARVESTER: 2,
-  DRONE: 1,
-  UPGRADER: 1,
-}
-
 const DEFAULT_TRACKER_DATA = {
   creepCount: 0,
   droneCount: 0,
   _drones: {},
-}
-
-// todo: can dynamically determine cost, based on parts list
-const kits = {
-  default: { parts: [WORK, CARRY, MOVE], cost: 200 },
-  advanced: { parts: [WORK, CARRY, CARRY, MOVE, MOVE], cost: 300 },
-  'drone.v3': { parts: [WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 450 },
-  'drone.v4': { parts: [WORK, WORK, WORK, CARRY, CARRY, MOVE, MOVE, MOVE], cost: 450 },
-  agile: { parts: [WORK, CARRY, MOVE, MOVE, MOVE], cost: 300 },
-  soldier: { parts: [ATTACK, MOVE, TOUGH], cost: 140 }, // todo: does this work as default soldier?
-  medic: { parts: [HEAL, MOVE], cost: 300 } // todo: does a medic need energy?
 }
 
 const creepTracker = {
