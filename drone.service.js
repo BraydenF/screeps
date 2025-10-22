@@ -5,214 +5,130 @@ const OUTFITS = {
   BASE_PARTS: [WORK, CARRY, CARRY, MOVE, MOVE], // 300
   SCOUT: [MOVE], // 50
   MINER: [MOVE, WORK, WORK], // 250
-  UPGRADER: [WORK, WORK, CARRY, MOVE], // 300
+  UPGRADER: [WORK, CARRY, CARRY, MOVE], // 300
   HAULER: [MOVE, MOVE, MOVE, CARRY, CARRY, CARRY], // 300
   SOLDIER: [ATTACK, ATTACK, MOVE, MOVE], // 260
   FLAGBEARER: [CLAIM, MOVE], // 650
-}
+};
 
-/**
- * 
- * { work: 5, move: 2, carry: 0, cost: 600 }
- * { work: 5, move: 3, carry: 3, cost: 800 }
- * { work: 10, move: 6, carry: 6, cost: 1600 }
- */
+const builds = {
+  default: { cost: 300, parts: { work: 1, carry: 2, move: 2 } },
+  upgrader: { cost: 300, parts: { work: 1, carry: 2, move: 2 } },
+  scout: { cost: 50, parts: { move: 1 } },
+  miner: { cost: 250, parts: { work: 2, move: 1 } },
+  hauler: { cost: 300, parts: { move: 3, carry: 3 } },
+  soldier: { cost: 260, parts: { attack: 2, move: 2 } },
+  flagbearer: { cost: 650, parts: { claim: 1, move: 1 } },
+};
 
-const PART_PRIORITY = [TOUGH, WORK, ATTACK, CARRY, MOVE, RANGED_ATTACK, HEAL, CLAIM]
+const PART_PRIORITY = [TOUGH, WORK, ATTACK, CARRY, MOVE, RANGED_ATTACK, HEAL, CLAIM];
 
-function orderParts(reciept) {
+function getSortedParts(reciept) {
   const parts = [];
   PART_PRIORITY.forEach((part) => {
-    for (let x = 0; x <= reciept[part]; x++) {
-      parts.push(part);
+    if (reciept[part]) {
+      for (let x = 0; x <= reciept[part]; x++) parts.push(part);
     }
   });
   return parts;
 }
 
-function getPartsArray(cart) {
-  const parts = [];
-  const keys = Object.keys(cart).forEach(part => {
-    console.log(part, cart[part]);
+function selectParts(job, cost) {
+  let remainingBudget = cost;
+  let parts = {};
 
-  });
-
-  return parts;
-}
-
-/**
- * todo: update the logic to use the reciept to track the parts until the array is built based on part priority order.
- */
-function buyParts(budget, job) {
-  const isStandardJob = job === 'drone';
-  let remainingBudget = budget;
-  const reciept = { work: 0, carry: 0, move: 0, parts: [], cost: 0 };
-
-  if (job === 'scout' && remainingBudget > 500) {
-    reciept.parts = OUTFITS.SCOUT;
-    remainingBudget = remainingBudget - 50;
+  if (builds[job] && remainingBudget >= builds[job].cost) {
+    parts = builds[job].parts;
+    remainingBudget = remainingBudget - builds[job].cost;
   }
-  else if (job === 'flagbearer') {
-    reciept.parts = OUTFITS.FLAGBEARER;
-    remainingBudget = remainingBudget - 650;
-  }
-  else if (job === 'miner' && remainingBudget >= 250) {
-    reciept.parts = OUTFITS.MINER;
-    remainingBudget = remainingBudget - 250;
 
-    while (remainingBudget >= 100 && reciept.work <= 7) {
-      reciept.work++;
-      reciept.parts.push(WORK);
-      remainingBudget = remainingBudget - 100;
+  function addPart(part) {
+    if (typeof parts[part] === 'undefined') {
+      parts[part] = 1;
+    } else {
+      parts[part]++
     }
+    remainingBudget = remainingBudget - BODYPART_COST[part];
+  }
 
-    if (remainingBudget >= 50) {
-      reciept.move++;
-      reciept.parts.push(MOVE);
-      remainingBudget = remainingBudget - 50;
+  if (job === 'miner' && remainingBudget >= 250) {
+    while (remainingBudget >= 100 && parts.work < 6) {
+      addPart(WORK);
     }
 
     while(remainingBudget >= 100) {
-      reciept.carry++;
-      reciept.move++;
-
-      reciept.parts.push(CARRY);
-      reciept.parts.push(MOVE);
-
-      remainingBudget = remainingBudget - 100;
+      addPart(CARRY);
+      addPart(MOVE);
+    }
+  }
+  else if (job === 'hauler') {
+    while(remainingBudget >= 100) {
+      addPart(CARRY);
+      addPart(MOVE);
     }
   }
   else if (job === 'upgrader' && remainingBudget >= 300) {
-    reciept.parts = OUTFITS.UPGRADER;
-    remainingBudget = remainingBudget - 300;
-
-    while (remainingBudget >= 100 && reciept.parts.length <= 7) {
-      reciept.work++;
-      reciept.parts.push(WORK);
-      remainingBudget = remainingBudget - 100;
+    while (remainingBudget >= 100 && parts.work < 7) {
+      addPart(WORK);
     }
 
-    if (remainingBudget >= 50) {
-      reciept.move++;
-      reciept.parts.push(MOVE);
-      remainingBudget = remainingBudget - 50;
-    }
+    if (remainingBudget >= 50) addPart(CARRY);
+    if (remainingBudget >= 50) addPart(CARRY);
 
-    if (remainingBudget >= 50) {
-      reciept.carry++;
-      reciept.parts.push(CARRY);
-      remainingBudget = remainingBudget - 50;
-    }
+    if (remainingBudget >= 50) addPart(MOVE);
+    if (remainingBudget >= 50) addPart(MOVE);
+
   }
-  else if (job === 'hauler' && remainingBudget >= 300) {
-    reciept.parts = OUTFITS.HAULER;
-    remainingBudget = remainingBudget - 300;
+  else if (job === 'drone' && remainingBudget >= 300) {
+    const baseSetsCount = Math.floor(remainingBudget / builds['default'].cost);
 
-    console.log('remainingBudget', remainingBudget);
-    while(remainingBudget >= 100) {
-      reciept.carry++;
-      reciept.move++;
+    parts.work = baseSetsCount * builds['default'].parts.work;
+    parts.carry = baseSetsCount * builds['default'].parts.carry;
+    parts.move = baseSetsCount * builds['default'].parts.move;
 
-      reciept.parts.push(CARRY);
-      reciept.parts.push(MOVE);
-
-    console.log('remainingBudget', remainingBudget);
-      remainingBudget = remainingBudget - 100;
-    }
-
-    if (remainingBudget >= 50) {
-      reciept.move++;
-      reciept.parts.push(MOVE);
-      remainingBudget = remainingBudget - 50;
-    }
-  } else if (job === 'soldier') {
-    reciept.parts = OUTFITS.SOLDIER;
-    remainingBudget = remainingBudget - 260;
-  }
-  else if (isStandardJob && remainingBudget >= 300) {
-    const baseSetCost = 300;
-    const baseSet = { workMultiplier: 1, carryMultiplier: 2, moveMultiplier: 2 } // cost: 300
-    const baseSetsCount = Math.floor(remainingBudget / baseSetCost);
-
-    reciept.work = baseSetsCount * baseSet.workMultiplier;
-    reciept.carry = baseSetsCount * baseSet.carryMultiplier;
-    reciept.move = baseSetsCount * baseSet.moveMultiplier;
-
-    for (let i = 0; i < baseSetsCount; i++) {
-      for (let j = 0; j < OUTFITS.BASE_PARTS.length; j++) {
-        reciept.parts.push(OUTFITS.BASE_PARTS[j]);
-      }
-    }
-
-    remainingBudget = remainingBudget - (baseSetsCount * baseSetCost);
+    remainingBudget = remainingBudget - (baseSetsCount * builds['default'].cost);
 
     // double productivity first
-    if (remainingBudget >= 100) {
-      reciept.work = 1;
-      reciept.parts.push(WORK);
-      remainingBudget = remainingBudget - 100;
-    }
+    if (remainingBudget >= 100) addPart(WORK);
 
     while(remainingBudget >= 100) {
-      reciept.carry++;
-      reciept.move++;
-
-      reciept.parts.push(CARRY);
-      reciept.parts.push(MOVE);
-
-      remainingBudget = remainingBudget - 100;
+      addPart(CARRY);
+      addPart(MOVE);
     }
 
-    if (remainingBudget >= 50) {
-      reciept.move++;
-      reciept.parts.push(MOVE);
-      remainingBudget = remainingBudget - 50;
-    }
+    if (remainingBudget >= 50) addPart(MOVE);
   }
 
-  reciept.cost = budget - remainingBudget;
-  return reciept;
+  return parts;
 }
 
-const droneService = {
-  createDroneFactory: function(spawn) {
-    if (typeof spawn === 'string') spawn = Game.spawns[spawn];
+function createDroneFactory(spawn) {
+  if (typeof spawn === 'string') spawn = Game.spawns[spawn];
 
-    return function(job = 'drone', budget = 300) {
-      const name = `${job}-${Game.time}-chan`;
-      let reciept = {};
-      if (typeof budget === 'number') reciept = buyParts(budget, job);
-      else if (Array.isArray(budget)) reciept = { parts: budget };
-
-      // reciept.parts = [MOVE];
-      let status = spawn.spawnCreep(reciept.parts, name, { dryRun: true });
-      console.log(reciept.cost, reciept.parts.toString(), status);
-
-      if (status === OK) {
-        status = spawn.createCreep(reciept.parts, name, { role: 'drone', job: job });
-        console.log(`<b>Building Drone:</b> ${job}:${budget}`);
-        console.log('Parts:', reciept.parts);
-      }
-
-      return { status: status, name: status === OK ? name : null };
-    }
-  },
-  createDrone: function(job = 'drone', budget = 300, memory = {}) {
-    const spawn = Game.spawns[true ? 'Spawn1' : 'Spawn2'];
+  return function(job = 'drone', input = 300, mem = {}) {
     const name = `${job}-${Game.time}-chan`;
-    const reciept = buyParts(budget, job);
+    let reciept = {};
+    let parts = [];
 
-    // reciept.parts = [MOVE];
-    let status = spawn.spawnCreep(reciept.parts, name, { dryRun: true });
-    console.log(reciept.cost, reciept.parts.toString(), status);
+    if (typeof input === 'number') reciept = selectParts(job, input);
+    else if (Array.isArray(input)) parts = input;
+    else if (typeof input === 'object') reciept = input;
+
+    if (parts.length === 0) {
+      parts = getSortedParts(reciept);
+    }
+
+    let status = spawn.spawnCreep(parts, name, { dryRun: true });
 
     if (status === OK) {
-      status = spawn.createCreep(reciept.parts, name, { role: 'drone', job: job, ...memory });
-      console.log(`<b>Building drone:</b> ${job}:${budget}`);
-      console.log(reciept.parts);
+      const memory = { role: 'drone', job: job, homeRoom: spawn.room.name, ...mem, };
+      status = spawn.spawnCreep(parts, name, { memory });
+      // console.log(`<b>Building:</b> ${job}:${input}`, status);
+      // console.log('Parts:', reciept.parts);
     }
-    return { status: status, name: status === OK ? name : null };
-  },
-};
 
-module.exports = droneService;
+    return { status: status, name: status === OK ? name : null };
+  }
+}
+
+module.exports = { createDroneFactory, selectParts };

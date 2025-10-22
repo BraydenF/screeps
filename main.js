@@ -1,134 +1,132 @@
 const config = require('config');
 const utils = require('utils');
-const creepService = require('creep.service');
 const Hive = require('Hive');
 const Drone = require('Drone.class');
-const droneService = require('drone.service');
+const GameMap = require('GameMap');
+const MarketController = require('MarketController');
+const PowerCreep = require('PowerCreep');
 
 global.Hive = Hive;
 global.Drone = Drone;
+global.grc = countResource;
+
+global.viewDroneCpu = function(jobName) {
+  let totalCpu = 0;
+  let count = 0;
+  const data = {};
+
+  for (const name in Memory.creeps) {
+    const creep = Memory.creeps[name];
+    const ticks = creep.ticksToLive > 0 ? 1500 - creep.ticksToLive : 1500;
+
+    if (creep.totalCpu && (!jobName || creep.job === jobName)) {
+      const avgCpu = creep.totalCpu ? creep.totalCpu / ticks : 0;
+
+      if (avgCpu > 0) {
+        totalCpu = totalCpu + avgCpu;
+        count++;
+
+        // if (creep.job) {
+        //   if (!Memory.data[creep.job]) Memory.data[creep.job] = { total: 0, avg: 0, count: 0 };
+        //   Memory.data[creep.job].total = Memory.data[creep.job].total + creep.totalCpu;
+        //   Memory.data[creep.job].avg = Memory.data[creep.job].avg + creep.avgCpu;
+        //   Memory.data[creep.job].count++;
+        // }
+      }
+    }
+  }
+
+  console.log(totalCpu, '/', count);
+  return totalCpu / count;
+  // return totalCpu / Memory.creeps.length;
+}
+
+// global.Spawn4.createDrone('drone', [WORK, MOVE, CARRY, WORK, MOVE, CARRY, WORK]);
 
 /**
- * todo:
- * - create offensive creeps / automate defenses. 
- * - Re organize the code, things are cluttered.
+ * To Do:
+ * Hive
+ * - Complete the task queue - In Progress
+ * - Update the TowerService to use the Taskqueue instead of reserving a hauler
+ * 
+ * Creeps
+ * - Update creeps to correctly move a set amounts of resources
+ * 
+ * Misc
+ * - 
+ *
  */
-const consoleService = {
-  init: function() {
-  	// console commands
-    global.creepService = creepService;
 
-    // global.spawn = function(job, budget) {
-    //   spawnQueue.pushJob({ job, budget });
-    // }
-
-    // short cuts
-    // global.createDrone = spawnController.createDrone;
-    global.createDrone = droneService.createDrone;
-  },
-  run: function() {
-  	consoleService.init();
-  	if (Game.time % 5 === 0) {
-      console.log('*****************************************************************');
-      console.log('*****************************************************************');
-      _.map(Game.spawns, (spawn) => {
-        console.log(`<b>${spawn.name}'s energy:</b> ${spawn.room.energyAvailable} / ${spawn.room.energyCapacityAvailable}`);
-        console.log(`<b>Drone Count: ${Hive.getCreeps(spawn).length}`);
-        console.log(`<b>Lab Report: ${Hive.labReport(spawn)}`);
-        // spawnController.spawnQueue.report();
-        console.log('*****************************************************************');
-      });
-  	}
+function countResource(resource) {
+  let total = 0;
+  for (var roomName in Game.rooms) {
+    const room = Game.rooms[roomName];
+    if (room && room.controller && room.controller._my && room.storage) {
+      total = total + room.storage.store.getUsedCapacity(resource);
+      if (room.terminal) {
+        total = total + room.terminal.store.getUsedCapacity(resource);
+      }
+    }
   }
+  return total;
 }
 
 // main logic loop
 module.exports.loop = function () {
-  consoleService.run();
+  // defines the top of the tick for report viewing
+  const reportTime = 10;
+  if (Game.time % reportTime === 0) console.log('*****************************************************************');
+  // console.log('*****************************************************************');
+  const totalData = { energy: 0, battery: 0 };
 
-  // todo: multi room loop will soon be needed
-  for (var room_it in Game.rooms) {
-    const spawn = Game.rooms[room_it].find(FIND_MY_SPAWNS)[0];
-    if (spawn) {
-      const hive = new Hive(spawn.name);
-      hive.run();
-    }
-  }
+  let hiveCpu = Game.cpu.getUsed();
+  for (var roomName in Game.rooms) {
+    const room = Game.rooms[roomName];
+    if (room.controller && room.controller._my) {
+      const hive = new Hive(roomName);
+      if (hive) {
+        const cpu = Game.cpu.getUsed();
+        const data = hive.run();
 
-  Drone.getDrones().forEach(drone => drone.run());
-  creepService.run();
+        // if (data) {
+        //   totalData.energy = totalData.energy + data.energy;
+        //   totalData.battery = totalData.battery + data.battery;
+        // }
 
-  const myRoom = 'W7N52';
-
-  const orderId = '682fd8c1f9846cd5111cdca2';
-  const order = Game.market.getOrderById(orderId);
-  const amount = 1000;
-
-  // console.log('transactioncost', Game.market.calcTransactionCost(1000, myRoom, 'E47N51'));
-  const buyingEnergy = false;
-  if (Game.time % 10 === 0 && buyingEnergy) {
-    // energy sell orders
-    Game.market.getAllOrders({ type: ORDER_SELL, resourceType: RESOURCE_ENERGY}).forEach(order => {
-      const maxPrice = 2.5; // lookup price
-      if (order.roomName.includes('N') && order.price < maxPrice) {
-        // check the distance or that it is in the same region somehow.
-        if (order.price < 2.5) {
-          const maxBudget = 5000;
-          const ceil = 2500;
-          // (order.remainingAmount * price)
-          const amount = Math.floor(maxBudget / order.price);
-          // Game.market.deal(order.id, amount, 'W7N52');
-          console.log('Order Complete', order.id, amount, order.resourceType, order.price);
-        }
+        if (Game.time % reportTime === 0) hive.report(cpu);
       }
+    }
+    // else if (Game.time % 15 === OK) {
+      // const preScan = Game.cpu.getUsed();
+      // GameMap.scan(roomName);
+      // Memory.rooms[roomName] = undefined;
+      // console.log('scan-cpu', Game.cpu.getUsed() - preScan);
+    // }
+  }
+  Memory.data = totalData;
+  hiveCpu = Game.cpu.getUsed() - hiveCpu;
+
+  let droneCpu = Game.cpu.getUsed();
+  if (Game.cpu.bucket > 35) {
+    Drone.runDrones()
+    // Drone.getDrones().forEach(drone => drone.run());
+  }
+
+  PowerCreep.run();
+
+  // if (Game.time % 100 === OK) GameMap.scan();
+
+  // MarketController.scan();
+
+  if (Game.time % 10000 === OK) {
+    // clears old creeps from memory
+    Object.keys(Memory.creeps).forEach(name => {
+      const creep = Game.creeps[name];
+      if (typeof creep === 'undefined') Memory.creeps[name] = undefined;
     });
-    // console.log('northernEnergyOrders', localEnergyOrders.length);
-    // 
-    // Game.market.getAllOrders({ type: ORDER_BUY, resourceType: 'H'}).forEach(order => {
-    //   if (order.price >= 137) {
-    //     // console.log('Hydrogen Order');
-    //     // Game.market.deal(order.id, amount, 'W7N52');
-    //   }
-    // });
   }
 
-
-  if (order) {
-    const energyCost = Game.market.calcTransactionCost(amount, myRoom, order.roomName);
-    console.log('ID:', orderId, 'room', order.roomName);
-    console.log('Energy:', energyCost);
-    console.log('Credits:', amount * order.price);
-
-    // I should look at the marker for orders for energy near me. I wouldn't mind auto buying anything for less than like 3.
-  }
-  /**
-    * Market notes
-    * 
-    * H
-    * 682fae3e70d16c0012dd6133 // 183.042 - 14,500
-    * O
-    * 68139fc270d16c00129ceb51 - 24.269
-    * 
-    * EXAMPLE - Game.market.deal('682fd8c1f9846cd5111cdca2', 1195, 'W7N52');
-    * 
-    *  ZH
-    *  Game.market.deal('682b145d70d16c00122bf96c', 2000, 'W7N52'); // cost 19.333
-    *  Game.market.deal('680d8e6f70d16c00125df622', 1840, 'W7N52'); // cost 19.333
-    *  Currently profiting 80.000 - 90.000 credits per unit here.
-    *
-    * GO 
-    * Game.market.deal('681617aa70d16c00128359e8', 2000, 'W7N52'); // cost 109.847
-    * Game.market.deal('6813ce6270d16c0012ae2136', 51661, 'W7N52'); // cost 110.000 Next highest 335.531
-    * G buy orders for (51,661 * 121.412)
-    * I can profit ~11.400 credits each
-    * Sell orders start at 515, I could still potentially make good profit margins, or save a ton on getting my own G.
-    * 
-    * Energy
-    * 
-    * Game.market.deal('682f9cd970d16c0012d6e5d9', 450, 'W7N52'); // 1.898
-    * Game.market.deal('68191db770d16c00129fbf86', 51661, 'W7N52');
-    *
-    * let bar = Game.market.calcTransactionCost(1500, 'W7N52', 'E56N48');
-    */
-  
+  const fincpu = Game.cpu.getUsed();
+  // const droneCpuReprt = `drone-cpu ${Game.cpu.getUsed() - droneCpu).toFixed(4)}`;
+  console.log('hive-cpu', hiveCpu.toFixed(4), 'drone-cpu', (Game.cpu.getUsed() - droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), `TL:${Game.cpu.tickLimit}`, `B:${Game.cpu.bucket}`);
 }

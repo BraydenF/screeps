@@ -1,5 +1,5 @@
 const Drone = require('Drone.class');
-const { JOBS, MODES, INITIAL_SPAWN, DRONE_LIMIT, SPAWN_MODES, MINERS_ENABLED } = require('config');
+const { JOBS, MODES, INITIAL_SPAWN, DRONE_LIMIT, SPAWN_MODES } = require('config');
 const droneService = require('drone.service');
 
 const { INITAL_SPAWN_MODE, MAINTENANCE_MODE } = SPAWN_MODES;
@@ -44,12 +44,12 @@ const spawnQueue = {
         const room = Game.spawns[INITIAL_SPAWN].room;
         const queue = spawnQueue.getQueue();
 
-        if (queue.length && queue[0].budget <= room.energyAvailable) {
-            const { job, budget } = queue[0];
-            console.log(`Queue Spawning; [${job}:${budget}]`);
-            droneService.createDrone(job, budget);
-            queue.shift();
-        }
+        // if (queue.length && queue[0].budget <= room.energyAvailable) {
+        //     const { job, budget } = queue[0];
+        //     console.log(`Queue Spawning; [${job}:${budget}]`);
+        //     droneService.createDrone(job, budget);
+        //     queue.shift();
+        // }
 
         spawnQueue._save();
     },
@@ -65,8 +65,8 @@ const spawnController = {
     lowDroneCount: function() {
         // todo: update spawn function to use the spawn queue system.
         if (room.energyAvailable >= 300) {
-            const res = droneService.createDrone('upgrader', 300);
-            console.log(res);
+            // const res = droneService.createDrone('upgrader', 300);
+            // console.log(res);
         }
     },
     // todo: this should be relocated to a service.
