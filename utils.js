@@ -109,10 +109,20 @@ Array.prototype.rand = function() {
     return this[index];
 };
 
+Array.prototype.first = function() {
+  return this.length && this[0];
+}
+
 // performs the provided function on the first element of the array if it exists
 Array.prototype.onFirst = function(func) {
   const first = this.length && this[0];
   if (func && first) return func(first);
+}
+
+Array.prototype.onEmpty = function(func) {
+    if (this.length == 0 && func) {
+        return func();
+    }
 }
 
 /** Test code that has been deprecated, wanted to keep the structure and basic idea */

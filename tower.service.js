@@ -1,5 +1,6 @@
 // tower management system
 const spawn = Game.spawns['spawn'];
+const MIN_BUCKET = 25;
 const defaultTowerConfig = {
   min_wall: 21500,
 }
@@ -24,21 +25,21 @@ const towerService = {
       filter: { structureType: STRUCTURE_TOWER }
     });
   },
-  getHostileTarget: function() {
+  getHostileTarget: function(tower) {
+    const healer = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS, { filter: (creep) => creep.getActiveBodyparts(HEAL) > 0 });
     const closestHostile = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
-    // todo: target healers first
     return closestHostile;
   },
   getEnergyStatus: function(tower) {
-      let status;
-      if (tower.store.getUsedCapacity(RESOURCE_ENERGY) <= 200) {
-        status = 'low-energy';
-      } else if (tower.store.getUsedCapacity(RESOURCE_ENERGY) >= 800) {
-        status = 'energized';
-      } else if (tower.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
-        status = 'full-energy';
-      }
-      return status
+    let status;
+    if (tower.store.getUsedCapacity(RESOURCE_ENERGY) <= 200) {
+      status = 'low-energy';
+    } else if (tower.store.getUsedCapacity(RESOURCE_ENERGY) >= 800) {
+      status = 'energized';
+    } else if (tower.store.getFreeCapacity(RESOURCE_ENERGY) === 0) {
+      status = 'full-energy';
+    }
+    return status
   },
   manageHauler: function(hive, tower) {
     const towerHauler = hive.get(`towerHauler-${tower.id}`);
@@ -62,7 +63,7 @@ const towerService = {
       // check to see if the hauler should be released from conscription
       const hauler = Game.getObjectById(towerHauler);
 
-      if (hauler.memory.task !== 'unload') {
+      if (hauler && hauler.memory.task !== 'unload') {
         hive.set(`towerHauler-${tower.id}`, null);
         console.log(`${hauler.name} released`);
       }
@@ -70,33 +71,57 @@ const towerService = {
 
     return towerHauler;
   },
-  run: function(tower) {
-    const hasLowEnergy = towerService.getEnergyStatus(tower) === 'low-energy';
-    const closestHostile = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
-    const damagedCreep = tower.pos.findClosestByRange(FIND_MY_CREEPS, { filter:
-      (creep) => creep.hits !== creep.hitsMax,
-    });
+  run: function(room, towers) {
+    // let cpu = Game.cpu.getUsed();
+    // const prevTowerEnergy = room.memory.prevTowerEnergy || 0;
+    const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
+    if (Game.time % 5 !== OK && hostileTargets.length === 0) return 0;
+    else if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
 
-    if (closestHostile) {
-      console.log(`User ${closestHostile.owner.username} spotted!`);
-      const status = tower.attack(closestHostile);
-    }
-    else if (damagedCreep) {
-      tower.heal(damagedCreep);
-    }
-    else if (!hasLowEnergy) {
-      const closestDamagedStructure = tower.pos.findClosestByRange(FIND_STRUCTURES, { filter: (structure) => {
-        return structure.hitsMax - structure.hits >= 800 && (
-          !(structure.structureType === STRUCTURE_WALL || structure.structureType === STRUCTURE_RAMPART) ||
-          (structure.structureType === STRUCTURE_WALL && structure.hits < defaultTowerConfig.min_wall) ||
-          (structure.structureType === STRUCTURE_RAMPART && structure.hits < defaultTowerConfig.min_wall)
-        )
+    // const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
+    const repairMultiplier = 1 * room.controller.level * 0.5;
+    let repairTargets;
+    if (hostileTargets.length === OK) {
+      repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
+        const criticallyLow = ((struct.hits / struct.hitsMax) <= 0.5) && (struct.hits <= 20000);
+        const minimumDamage = (struct.hitsMax - struct.hits) >= 1000; // max heal is 800
+        const containers = struct.structureType === STRUCTURE_CONTAINER && struct.hits < 150000;
+        const walls = struct.structureType === STRUCTURE_WALL && struct.hits < (defaultTowerConfig.min_wall * repairMultiplier);
+        const ramparts = struct.structureType === STRUCTURE_RAMPART && struct.hits <= defaultTowerConfig.min_wall * repairMultiplier;
+        const tunnels = struct.structureType === STRUCTURE_ROAD && struct.hits > 5000 && struct.hits < 500000;
+
+        return criticallyLow || (minimumDamage && (containers || walls || ramparts || tunnels));
       }});
-
-      if (closestDamagedStructure) {
-        tower.repair(closestDamagedStructure);
-      }
     }
+
+    let towerEnergy = 0;
+    room.memory.tEnergy = {};
+    towers.forEach((tower) => {
+      if (hostileTargets.length > 0) {
+        // if (damagedCreep) {
+        //   tower.heal(damagedCreep);
+        // } else {
+          const status = tower.attack(hostileTargets[0]);
+        // }
+      } else if (tower.store.getUsedCapacity(RESOURCE_ENERGY) >= 200 && repairTargets.length > 0) {
+        const target = tower.pos.findClosestByRange(repairTargets)
+        if (target) tower.repair(target);
+      }
+
+      towerEnergy = towerEnergy + tower.store.getUsedCapacity('energy');
+      if (tower.store.getUsedCapacity('energy') <= 400) {
+        room.memory.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
+      }
+    });
+    // console.log('t-cpu', Game.cpu.getUsed() - cpu);
+
+    // const totalTowerEnergy = towers.length * 1000;
+    // console.log('towerEnergy', towerEnergy, totalTowerEnergy, towerEnergy / totalTowerEnergy);
+    // if (room.controller.level >= 7 && towerEnergy < 1000) {
+    //   console.log('additional', 'tHauler', towerEnergy);
+    // }
+
+    return towerEnergy;
   }
 }
 
