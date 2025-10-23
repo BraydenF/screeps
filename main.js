@@ -79,14 +79,16 @@ module.exports.loop = function () {
   // console.log('*****************************************************************');
   const totalData = { energy: 0, battery: 0 };
 
-  let hiveCpu = Game.cpu.getUsed();
-  for (const roomName of Object.keys(Game.rooms)) {
-    const room = Game.rooms[roomName];
-    if (room.controller && room.controller._my) {
-      const hive = new Hive(roomName);
-      if (hive) {
+  let totalHiveCpu = Game.cpu.getUsed();
+
+  if (global.hives) {
+    for (const roomName of Object.keys(global.hives)) {
+      const hive = global.hives[roomName];
+      if (hive instanceof Hive) {
         const cpu = Game.cpu.getUsed();
         const data = hive.run();
+
+        // console.log('hive.creeps', Object.keys(hive.creeps).length);
 
         // if (data) {
         //   totalData.energy = totalData.energy + data.energy;
@@ -96,37 +98,43 @@ module.exports.loop = function () {
         if (Game.time % reportTime === 0) hive.report(cpu);
       }
     }
-    // else if (Game.time % 15 === OK) {
-      // const preScan = Game.cpu.getUsed();
-      // GameMap.scan(roomName);
-      // Memory.rooms[roomName] = undefined;
-      // console.log('scan-cpu', Game.cpu.getUsed() - preScan);
-    // }
+  } else {
+    global.hives = {};
   }
+
   Memory.data = totalData;
-  hiveCpu = Game.cpu.getUsed() - hiveCpu;
+  totalHiveCpu = Game.cpu.getUsed() - totalHiveCpu;
 
   let droneCpu = Game.cpu.getUsed();
   if (Game.cpu.bucket > 35) {
-    Drone.runDrones()
-    // Drone.getDrones().forEach(drone => drone.run());
+    if (global.drones) Drone.runDrones(global.drones);
+    else global.drones = {};
+    if (Game.cpu.getUsed() < 20) Drone.globalizeDrones();
   }
 
-  PowerCreep.run();
+  if (Game.cpu.bucket > 15) {
+    PowerCreep.run();
+  }
 
-  // if (Game.time % 100 === OK) GameMap.scan();
+  // some init and cleanup code has been placed behind a CPU wall!
+  if (Game.cpu.getUsed() < 20 && Game.cpu.bucket > 100) {
+    for (const roomName of Object.keys(Game.rooms)) {
+      const room = Game.rooms[roomName];
+      if (!global.hives[roomName] && room.controller && room.controller._my) {
+        global.hives[roomName] = new Hive(roomName);
+      }
+    }
 
-  // MarketController.scan();
-
-  if (Game.time % 10000 === OK) {
-    // clears old creeps from memory
-    Object.keys(Memory.creeps).forEach(name => {
-      const creep = Game.creeps[name];
-      if (typeof creep === 'undefined') Memory.creeps[name] = undefined;
-    });
+    if (Game.time % 10000 === OK) {
+      // clears old creeps from memory
+      Object.keys(Memory.creeps).forEach(name => {
+        const creep = Game.creeps[name];
+        if (typeof creep === 'undefined') Memory.creeps[name] = undefined;
+      });
+    }
   }
 
   const fincpu = Game.cpu.getUsed();
   // const droneCpuReprt = `drone-cpu ${Game.cpu.getUsed() - droneCpu).toFixed(4)}`;
-  console.log('hive-cpu', hiveCpu.toFixed(4), 'drone-cpu', (Game.cpu.getUsed() - droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), `TL:${Game.cpu.tickLimit}`, `B:${Game.cpu.bucket}`);
+  console.log('hive-cpu', totalHiveCpu.toFixed(4), 'drone-cpu', (Game.cpu.getUsed() - droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), `TL:${Game.cpu.tickLimit}`, `B:${Game.cpu.bucket}`);
 }

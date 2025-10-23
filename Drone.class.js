@@ -58,13 +58,32 @@ class Drone extends BaseCreep {
     return new Drone(creep);
   }
 
-  static runDrones() {
-    for(const name in Game.creeps) {
+  static globalizeDrones() {
+    for (const name in Game.creeps) {
       const creep = Game.creeps[name];
 
-      if (creep.memory.role === 'drone') {
+      if (!global.drones[name] && creep.memory.role === 'drone') {
         const drone = new Drone(creep);
+        global.drones[name] = drone;
+
         drone.run();
+      }
+    }
+  }
+
+  static runDrones(drones = {}) {
+    for (const name in drones) {
+      const drone = Game.creeps[name] && global.drones[name];
+
+      if (drone) {
+        drone.run();
+
+        // ensures the drone is available to its hive
+        const hr = drone.creep.memory.homeRoom;
+        const hh = hr && global.hives[hr];
+        if (hh && !hh.drones[name]) hh.addDrone(drone);
+      } else {
+        global.drones[name] = undefined;
       }
     }
   }
@@ -282,6 +301,7 @@ class Drone extends BaseCreep {
               this.setTarget(terminal.id);
             } else
             if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) >= 20000) {
+              // build targets are now in the room memory!
               const buildTargets = room.find(FIND_CONSTRUCTION_SITES);
               if (buildTargets && buildTargets.length || lowRoomEnergy) {
                 this.setTask('load');
@@ -343,6 +363,7 @@ class Drone extends BaseCreep {
                 break;
               }
 
+              // note: consider updating drones to use the hive memory
               const buildTargets = room.find(FIND_CONSTRUCTION_SITES);
               if (buildTargets && buildTargets.length) {
                 // NOTE: consider adding build priority
@@ -827,10 +848,13 @@ class Drone extends BaseCreep {
               }
             }
           } else {
-            const buildTargets = room.find(FIND_CONSTRUCTION_SITES);
+            // instead of 
+            const buildTargets = room.memory['build-targets'] ? room.memory['build-targets'].map(id => Game.getObjectById(id)) : [];
+            // const buildTargets = room.find(FIND_CONSTRUCTION_SITES);
             if (buildTargets.length > 0) {
-              this.setTask('build');
+              this.setTask('build', this.creep.pos.findClosestByPath(buildTargets).id);
             } else {
+              // move repair targets to a by the room 
               const repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
                 const minimumDamage = (struct.hitsMax - struct.hits) >= 1000; // max heal is 800
                 const walls = struct.structureType === STRUCTURE_WALL && struct.hits < 1000000

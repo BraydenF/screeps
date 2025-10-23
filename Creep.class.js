@@ -161,12 +161,13 @@ class BaseCreep {
     if (typeof target === 'string') target = Game.getObjectById(target);
     if (typeof target === 'number') {
       const exit = this.creep.pos.findClosestByRange(target);
-      return this.creep.moveTo(exit, { reusePath: 5, visualizePathStyle: { stroke: '#ffffff' } });
+      // { reusePath: 20, maxOps: 2000, ignoreCreeps: false }
+      return this.creep.moveTo(exit, config.moveToOpts);
     }
 
     if (target.pos && this.creep.room.name === target.pos.roomName) {
       if (this.creep.fatigue === OK) {
-        return this.creep.moveTo(target, { reusePath: 3, visualizePathStyle: { stroke: '#ffffff' } });
+        return this.creep.moveTo(target, config.moveToOpts);
       } else {
         Game.map.visual.line(this.creep.pos, target.pos, { width: 0.3 });
         return ERR_TIRED;
@@ -179,7 +180,7 @@ class BaseCreep {
         // if (this.get('targetRoom') === 'E6N56') console.log('route.length', route.length);
         if (route.length >= 2) {
           // console.log('111')
-          return this.creep.moveTo(exit, { reusePath: 15, visualizePathStyle: { stroke: '#ffffff' } });
+          return this.creep.moveTo(exit, config.moveToOpts);
         } else {
           const ret = PathFinder.search(this.creep.pos, exit, {
             maxRooms: 2,
@@ -408,17 +409,20 @@ class BaseCreep {
 
   upgrade() {
     const controller = this.creep.room.controller;
-    const status = this.creep.upgradeController(controller);
 
-    if (controller && !this.creep.pos.inRangeTo(controller, 3)) {
+    if (this.creep.pos.inRangeTo(controller, 3)) {
+      const status = this.creep.upgradeController(controller);
+
+      if (status === ERR_NOT_IN_RANGE) {
+        this.moveTo(controller);
+      } else if (status === ERR_NOT_ENOUGH_RESOURCES || status === ERR_NOT_OWNER) {
+        this.enterStandby();
+      }
+
+      return status;
+    } else {
       this.moveTo(controller);
       return ERR_NOT_IN_RANGE;
-    }
-
-    if (status === ERR_NOT_IN_RANGE) {
-      this.moveTo(controller);
-    } else if (status === ERR_NOT_ENOUGH_RESOURCES || status === ERR_NOT_OWNER) {
-      this.enterStandby();
     }
   }
 
