@@ -68,16 +68,12 @@ class Hive {
     return global[`${this.roomName}-drones`];
   }
 
-  // set drones(val) {
-  //   global[`${this.roomName}-drones`] = val;
-  // }
-
   get storage() {
     return this.room.storage;
   }
 
   get terminal() {
-    return this.terminal;
+    return this.room.terminal;
   }
 
   constructor(roomName) {
@@ -101,30 +97,17 @@ class Hive {
       this.terminalController = new TerminalController(this.room.terminal);
       global[this.nickname].terminal = this.terminalController;
     }
-
-    const factory = this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_FACTORY } }).onFirst(f => f);
-    if (factory) {
-      this.factory = factory;
-      this.factoryController = new FactoryController(factory);
-    }
-
-    global[this.nickname].createDrone = droneService.createDroneFactory(this.spawn.getSpawn());
-    // todo: move these to the market controller
   }
 
   init() {
-    const key = `${this.roomName}-drones`;
-    if (!global[key]) global[key] = {};
-
     this.creeps = {};
-    Object.keys(this.drones).forEach(name => {
-      const creep = Game.creeps[name];
-      if (creep) this.creeps[name] = creep;
-    });
+    const key = `${this.roomName}-creeps`;
+    global[key].forEach(name => this.creeps[name] = global[key][name]);
 
-    if (!this.factory) {
+    if (!this.factory && this.controller.room.controller.level >= 7) {
       const factoryMem = this.room.memory.factory || {};
       this.factory = factoryMem.id ? Game.getObjectById(factoryMem.id) : this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_FACTORY } }).onFirst(f => f);
+      if (!this.factoryController && this.factory) this.factoryController = new FactoryController(this.factory);
     }
   }
 

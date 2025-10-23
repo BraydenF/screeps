@@ -18,10 +18,19 @@ class BaseCreep {
     return this.creep.room;
   }
 
+  get memory() {
+    return this.creep.memory;
+  }
+
+  get creep() {
+    return Game.creeps[this.name];
+  }
+
 	constructor(creep) {
+    if (!creep) console.log('huh?>>')
     const memory = creep.memory || {};
     this.name = creep.name;
-		this.creep = creep;
+		// this.creep = creep;
     this.task = memory.task ? memory.task : 'standby';
     this.taskQueue = new Queue(memory.taskQueue);
   }
@@ -35,7 +44,7 @@ class BaseCreep {
   }
 
   hasTask(task) {
-    return this.task === task;
+    return this.memory.task === task;
   }
 
   setTask(task, target = null, message = null) {
@@ -63,7 +72,7 @@ class BaseCreep {
   }
 
   isStandby() {
-    return !this.task || this.hasTask('standby');
+    return !this.memory.task || this.hasTask('standby');
   }
 
   enterStandby(message) {
@@ -167,25 +176,22 @@ class BaseCreep {
 
     if (target.pos && this.creep.room.name === target.pos.roomName) {
       if (this.creep.fatigue === OK) {
+        // console.log('moveTo', target);
         return this.creep.moveTo(target, config.moveToOpts);
-      } else {
-        Game.map.visual.line(this.creep.pos, target.pos, { width: 0.3 });
-        return ERR_TIRED;
       }
+      // else {
+      //   Game.map.visual.line(this.creep.pos, target.pos, { width: 0.3 });
+      //   return ERR_TIRED;
+      // }
     } else {
       const route = GameMap.findRoute(this.creep.room.name, target && (target.roomName || target.pos.roomName));
 
       if (route.length > 0) {
         const exit = this.creep.pos.findClosestByPath(route[0].exit);
-        // if (this.get('targetRoom') === 'E6N56') console.log('route.length', route.length);
         if (route.length >= 2) {
-          // console.log('111')
           return this.creep.moveTo(exit, config.moveToOpts);
         } else {
-          const ret = PathFinder.search(this.creep.pos, exit, {
-            maxRooms: 2,
-          });
-          // console.log('ret', ret.path[0]);
+          const ret = PathFinder.search(this.creep.pos, exit, { maxRooms: 2 });
           return this.creep.move(this.creep.pos.getDirectionTo(ret.path[0]));
         }
       }
@@ -332,16 +338,16 @@ class BaseCreep {
   transfer(target, resource = RESOURCE_ENERGY, amount = null) {
     if (typeof target === 'string') target = Game.getObjectById(target);
 
-    if (target && !this.creep.pos.isNearTo(target)) {
+    if (target && this.creep.pos.isNearTo(target)) {
+      const status = this.creep.transfer(target, resource, amount);
+      // if (status == ERR_NOT_IN_RANGE) {
+      //   this.moveTo(target);
+      // }
+      return status;
+    } else {
       this.moveTo(target);
       return ERR_NOT_IN_RANGE;
     }
-
-    const status = this.creep.transfer(target, resource, amount);
-    if (status == ERR_NOT_IN_RANGE) {
-      this.moveTo(target);
-    }
-    return status;
   }
 
   dropAll() {
@@ -580,7 +586,6 @@ class BaseCreep {
         if (targets && targets[0]) target = targets[0];
       }
     } else if (target && !this.creep.pos.isNearTo(target)) {
-      // if (this.creep.name === 'hauler-74242875-chan' 
       this.moveTo(target);
       return ERR_NOT_IN_RANGE;
     }
@@ -658,15 +663,16 @@ class BaseCreep {
       let resource = this.get('resource');
       let amount = this.get('amount');
       const flag = this.getFlag();
+      let status;
 
       // task queue
-      if ((this.task === 'queue' || this.hasTask('standby')) && this.hasTaskQueued()) {
+      if ((this.memory.task === 'queue' || this.hasTask('standby')) && this.hasTaskQueued()) {
         const queue = this.getTaskQueue();
         const task = queue.peek();
 
         if (typeof task === 'object') {
           if (task.name) {
-            this.task = task.name;
+            this.creep.memory.task = task.name;
             this.setTask(task.name);
             if (task.target) {
               target = task.target;
@@ -679,14 +685,14 @@ class BaseCreep {
           }
           queue.dequeue();
         } else if (typeof task === 'string') {
-          this.task = queue.dequeue();
+          this.creep.memory.task = queue.dequeue();
         }
       }
 
       // basic task operation
-      switch (this.task) {
+      switch (this.memory.task) {
         case 'moveTo':
-          this.moveTo(target);
+          status = this.moveTo(target);
           if (this.creep.pos.getRangeTo(target) === 0) this.enterStandby();
           break;
 
@@ -695,10 +701,10 @@ class BaseCreep {
           const energyNearSource = source && source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
 
           if (energyNearSource && energyNearSource.pos.isNearTo(source)) {
-            this.pickup(energyNearSource);
+            status = this.pickup(energyNearSource);
           } else {
             const targetedResources = this.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, { filter: { id: target }});
-            this.pickup(targetedResources);
+            status = this.pickup(targetedResources);
           }
           break;
 
@@ -709,7 +715,7 @@ class BaseCreep {
             });
             if (salvage) {
               target = salvage.id;
-              this.setTarget(target);
+              status = this.setTarget(target);
             }
           }
 
@@ -796,64 +802,64 @@ class BaseCreep {
 
 
           if (target && !this.getTarget()) this.setTarget(target);
-          const status = this.unload(target, resource, amount);
+          status = this.unload(target, resource, amount);
           break;
 
         case 'drop': 
-          this.dropAll();
+          status = this.dropAll();
           break;
 
         case 'harvest':
           if (this.canHarvest()) {
-            this.harvest(target || this.get('source'));
+            status = this.harvest(target || this.get('source'));
           } else {
-            this.enterStandby();
+            status = this.enterStandby();
           }
           break;
 
         case 'build':
-          this.build(target);
+          status = this.build(target);
           break;
 
         case 'upgrade':
-          this.upgrade();
+          status = this.upgrade();
           break;
 
         case 'repair':
-          this.repair(target);
+          status = this.repair(target);
           break;
 
         case 'transfer':
-          this.transfer(this.get('targetStore'));
+          status = this.transfer(this.get('targetStore'));
           break;
 
         case 'energyTransfer':
-          this.energyTransfer();
+          status = this.energyTransfer();
           break;
 
         case 'recharge':
-          this.recharge();
+          status = this.recharge();
           break;
 
         case 'reclaim':
-          if (!this.creep.pos.isNearTo(spawn)) this.moveTo(spawn);
-          else spawn.recycleCreep(this.creep);
+          if (!this.creep.pos.isNearTo(spawn)) status = this.moveTo(spawn);
+          else status = spawn.recycleCreep(this.creep);
           break;
 
         case 'attack':
-          this.attack(this.get('target'));
+          status = this.attack(this.get('target'));
           break;
 
         case 'range-attack':
-          this.rangedAttack(this.get('target'));
+          status = this.rangedAttack(this.get('target'));
           break;
 
         case 'siege':
           const siegeTarget = this.get('targetRoom');
           if (this.creep.room.name === siegeTarget) {
-            this.siege();
+            status = this.siege();
           } else {
-            this.moveTo(siegeTarget);
+            status = this.moveTo(siegeTarget);
           }
           break;
 
@@ -863,33 +869,33 @@ class BaseCreep {
           const woundedCreep = this.creep.pos.findClosestByRange(FIND_MY_CREEPS, { filter: creep => creep.hits < creep.hitsMax });
           if (woundedCreep) {
             if (woundedCreeps.length > 0 && this.creep.pos.isNearTo(woundedCreeps[0])) {
-              this.creep.heal(woundedCreeps[0]);
+              status = this.creep.heal(woundedCreeps[0]);
             } else if (this.creep.pos.isNearTo(woundedCreep)) {
-              this.creep.heal(woundedCreep);
+              status = this.creep.heal(woundedCreep);
             } else {
               if (woundedCreeps.length > 0) this.creep.rangedHeal(woundedCreeps[0]);
-              this.moveTo(woundedCreep);
+              status = this.moveTo(woundedCreep);
             }
           } else {
-            this.enterStandby();
+            status = this.enterStandby();
           }
           break;
 
         case 'attackController':
-          this.attackController(this.get('targetRoom'));
+          status = this.attackController(this.get('targetRoom'));
           break;
 
         case 'reserve':
-          this.reserve(this.get('targetRoom'));
+          status = this.reserve(this.get('targetRoom'));
           break;
 
         case 'claim':
-          this.claim(this.get('targetRoom'));
+          status = this.claim(this.get('targetRoom'));
           break;
 
         case 'flag':
           if (flag) {
-            const status = this.moveTo(flag);
+            status = this.moveTo(flag);
             const distanceToFlag = this.creep.pos.getRangeTo(flag);
             if (distanceToFlag <= 5) {
               if (flag.memory.task) this.setTask(flag.memory.task);
@@ -910,10 +916,10 @@ class BaseCreep {
           if (target) {
             const lab = typeof target === 'string' ? Game.getObjectById(target) : target;
             if (lab && lab.cooldown === OK) {
-              const status = lab.unboostCreep(this.creep);
-              if (status === OK || status === ERR_NOT_FOUND) {
+              const labStatus = lab.unboostCreep(this.creep);
+              if (labStatus === OK || labStatus === ERR_NOT_FOUND) {
                 // cool
-              } else if (status === ERR_NOT_IN_RANGE) {
+              } else if (labStatus === ERR_NOT_IN_RANGE) {
                 this.moveTo(lab);
               }
             }
@@ -921,7 +927,7 @@ class BaseCreep {
 
           const nearbyResource = this.creep.pos.findInRange(FIND_DROPPED_RESOURCES, 2).onFirst(f => f);
           if (nearbyResource) {
-            const status = this.pickup(nearbyResource);
+            status = this.pickup(nearbyResource);
             if (status === OK) {
               this.setTask('unload');
               this.setTarget(this.getStorage());
@@ -940,8 +946,10 @@ class BaseCreep {
           // todo: what can I do here about standby?
           break;
       }
+
+      // console.log(this.creep.name, this.memory.task, status);
     } catch (e) {
-      // throw e;
+      throw e;
       this.creep.say('‼️⁉️');
       console.log(this.creep.name, this.creep.room.name, 'failed task', e);
     }

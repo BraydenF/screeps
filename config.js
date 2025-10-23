@@ -14,6 +14,8 @@ const config = {
         HAULER: 'hauler',
         DRONE: 'drone',
     },
+    // moveToOpts: { reusePath: 20, maxOps: 2000, ignoreCreeps: false, visualizePathStyle: { stroke: '#ffffff' } },
+    moveToOpts: { reusePath: 15, visualizePathStyle: { stroke: '#ffffff' } },
     roomsToAvoid: ['W9N51', 'W8N51', 'W4N51', 'W1N51',  'W1N52', 'W1N54', 'E9N51', 'E9N54', 'E6N52', 'E7N52', 'E7N53', 'E9N58', 'E14N41', 'E15N41', 'W3N53'], // , 'W8N54'
     rooms: {
         W8N53: {

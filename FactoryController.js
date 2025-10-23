@@ -1,6 +1,3 @@
-const TaskController = require('TaskController');
-const TerminalController = require('TerminalController');
-
 const FACTORY_TARGET_ENERGY = 10000;
 
 const matMap = {
@@ -8,9 +5,13 @@ const matMap = {
 }
 
 class FactoryController {
-	// get factory() {
-	// 	return this.factory;
-	// }
+	get taskController() {
+		return this.hive.taskController;
+	}
+
+	get terminalController() {
+		return this.hive.terminalController;
+	}
 
 	static getComponents(resource) {
 		return typeof COMMODITIES[resource] !== 'undefined' ? COMMODITIES[resource].components : {};
@@ -25,12 +26,8 @@ class FactoryController {
 
 		this.factory = factory;
 		this.room = this.factory.room;
+		this.hive = global.hives[this.room.name];
 		this.storage = this.room.storage;
-		this.taskController = new TaskController(this.room);
-
-    if (this.room.terminal) {
-      this.terminalController = new TerminalController(this.room.terminal);
-    }
 
 		const mem = Memory.rooms[this.room.name].factory || {};
 		if (!mem.id) mem.id = this.factory.id
