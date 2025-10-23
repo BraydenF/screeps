@@ -554,16 +554,16 @@ class LabController {
 	}
 
 	report() {
-		const labs = this.get('labs');
-    const message = Object.keys(labs).reduce((acc, labId) => {
-    	const mem = labs[labId];
-    	if (mem && mem.task) acc.concat(`[${mem.task} : ${mem.resource}]`);
-  		return acc;
-    }, '');
-    if (message && message.length > 0) {
-      console.log('<b>Lab Report:</b>', ...message);
-    }
-  }
+	  const labs = this.get('labs') || {};
+	  const message = Object.keys(labs).reduce((acc, labId) => {
+	    const mem = labs[labId];
+	    if (mem && mem.task) return acc + `[${mem.task} : ${mem.resource}] `;
+	    return acc;
+	  }, '');
+	  if (message.length > 0) {
+	    console.log('<b>Lab Report:</b>', message);
+	  }
+	}
 }
 
 module.exports = LabController;

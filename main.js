@@ -59,7 +59,7 @@ global.viewDroneCpu = function(jobName) {
 
 function countResource(resource) {
   let total = 0;
-  for (var roomName in Game.rooms) {
+  for (const roomName of Object.keys(Game.rooms)) {
     const room = Game.rooms[roomName];
     if (room && room.controller && room.controller._my && room.storage) {
       total = total + room.storage.store.getUsedCapacity(resource);
@@ -80,7 +80,7 @@ module.exports.loop = function () {
   const totalData = { energy: 0, battery: 0 };
 
   let hiveCpu = Game.cpu.getUsed();
-  for (var roomName in Game.rooms) {
+  for (const roomName of Object.keys(Game.rooms)) {
     const room = Game.rooms[roomName];
     if (room.controller && room.controller._my) {
       const hive = new Hive(roomName);
