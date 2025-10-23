@@ -60,25 +60,36 @@ class Hive {
     return config.rooms[this.room.name] || {};
   }
 
+  get controller() {
+    return this.room.controller;
+  }
+
+  get drones() {
+    return global[`${this.roomName}-drones`];
+  }
+
+  // set drones(val) {
+  //   global[`${this.roomName}-drones`] = val;
+  // }
+
   get storage() {
-    return this.getStorage();
+    return this.room.storage;
+  }
+
+  get terminal() {
+    return this.terminal;
   }
 
   constructor(roomName) {
     const memory = Memory.rooms[roomName] || {};
 
+    this.roomName = roomName;
     this.room = Game.rooms[roomName];
     this.spawns = this.room.find(FIND_MY_SPAWNS);
     this.spawn = new SpawnController(this.room, this.spawns);
     this.taskController = new TaskController(this.room);
     this.labController = new LabController(this.room);
     this.powerSpawnController = new PowerSpawnController(this.spawn);
-
-    this.creeps = {};
-    Object.keys(Game.creeps).forEach(name => {
-      const creep = name && Game.creeps[name];
-      if (creep && creep.memory.homeRoom === this.room.name) this.creeps[name] = creep;
-    });
 
     if (!this.spawn.name) return; // ends initilization early
 
@@ -95,23 +106,25 @@ class Hive {
     if (factory) {
       this.factory = factory;
       this.factoryController = new FactoryController(factory);
-      global[this.nickname].factory = this.factoryController;
     }
 
     global[this.nickname].createDrone = droneService.createDroneFactory(this.spawn.getSpawn());
     // todo: move these to the market controller
-    global[this.nickname].preview = function (orderId, amount) {
-      const order = Game.market.getOrderById(orderId);
-      if (order) {
-        const energyCost = Game.market.calcTransactionCost(amount, spawn.room.name, order.roomName);
-        console.log('ID:', orderId, 'room', order.roomName);
-        console.log('Energy:', new Intl.NumberFormat().format(energyCost));
-        console.log('Credits:', new Intl.NumberFormat().format(amount * order.price));
-      }
-    }
-    global[this.nickname].deal = function (orderId, amount) {
-      console.log(orderId, amount, spawn.room.name);
-      return Game.market.deal(orderId, amount, spawn.room.name);
+  }
+
+  init() {
+    const key = `${this.roomName}-drones`;
+    if (!global[key]) global[key] = {};
+
+    this.creeps = {};
+    Object.keys(this.drones).forEach(name => {
+      const creep = Game.creeps[name];
+      if (creep) this.creeps[name] = creep;
+    });
+
+    if (!this.factory) {
+      const factoryMem = this.room.memory.factory || {};
+      this.factory = factoryMem.id ? Game.getObjectById(factoryMem.id) : this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_FACTORY } }).onFirst(f => f);
     }
   }
 
@@ -130,18 +143,6 @@ class Hive {
   getSpawn(pos = null) {
     // todo: update to use the controller to get the desired spawn.
     return this.spawn.getSpawn();
-  }
-
-  getController() {
-    return this.room.controller;
-  }
-
-  getStorage() {
-    return this.room.storage;
-  }
-
-  getTerminal() {
-    return this.room.terminal;
   }
 
   getSources() {
@@ -199,11 +200,16 @@ class Hive {
     return names.filter(name => filterFunc(Game.creeps[name]));
   }
 
+  addDrone(drone) {
+    const key = `${this.roomName}-drones`;
+    global[key][drone.name] = drone;
+  }
+
   getControllerContainer() {
     let container = Game.getObjectById(this.get('upgradeContainer'));
 
     if (!container) {
-      const controller = this.getController();
+      const controller = this.controller;
       const nearestContainer = controller.pos.findClosestByPath(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_CONTAINER } });
 
       if (nearestContainer && nearestContainer.pos.inRangeTo(controller, 3)) {
@@ -241,14 +247,14 @@ class Hive {
 
       if (sourceIds.length === 1) {
         upgraderNeedsReplaced = upgraders.length === 0;
-      } else if (this.getController().level === 8) {
+      } else if (this.controller.level === 8) {
         // todo: update the rate based on energy storage
         if (false) {
           upgraderNeedsReplaced = upgraders.length === 0 || (upgraders.length === 1 ? upgraders[0] && upgraders[0].ticksToLive <= 750 : false);
         } else {
           upgraderNeedsReplaced = upgraders.length === 0;
         }
-      } else if (this.getController().level <= 4) {
+      } else if (this.controller.level <= 4) {
         upgraderNeedsReplaced = upgraders.length < 2;
       } else {
         upgraderNeedsReplaced = upgraders.length === 0 || (upgraders.length === 1 ? upgraders[0] && upgraders[0].ticksToLive <= 750 : false);
@@ -291,7 +297,7 @@ class Hive {
         const container = mem.container && Game.getObjectById(mem.container);
 
         // creates haulers for each source, if there is energy or a miner
-        if (this.getController().level <= 5) {
+        if (this.controller.level <= 5) {
           if (!mem.hauler && mem.hauler) mem.hauler = null;
           else if (hauler && hauler.name !== mem.hauler) mem.hauler = hauler.name;
           if (!hauler && (miner || (!miner && container && container.store.getUsedCapacity(RESOURCE_ENERGY) > 1000))) {
@@ -316,7 +322,7 @@ class Hive {
 
           if (this.spawn.canSpawn(minerCost)) {
             let body = [...w5, MOVE];
-            if (this.getController().level >= 5 && minerCost >= 1200) {
+            if (this.controller.level >= 5 && minerCost >= 1200) {
               body = [...w5, WORK, WORK, MOVE, MOVE, MOVE, MOVE, CARRY, CARRY, CARRY, CARRY];
             }
 
@@ -334,7 +340,7 @@ class Hive {
         this.set('sources', sourcesMem);
       }
 
-      if (this.getController().level >= 6) {
+      if (this.controller.level >= 6) {
         const haulers = room.find(FIND_MY_CREEPS, { filter: (creep) => creep.memory.job === 'hauler' });
         const replaceHauler = haulers.length === 0 || (haulers.length === 1 ? haulers[0] && haulers[0].ticksToLive <= 100 : false);
 
@@ -417,6 +423,7 @@ class Hive {
               // construct the container!
               const source = Game.getObjectById(sourceMem.id);
               if (source) {
+                // todo: the room memory could be updated by the hive here to avoid the search.
                 const cSite = source.pos.findClosestByRange(FIND_CONSTRUCTION_SITES, { filter: { structureType: STRUCTURE_CONTAINER } });
                 if (!cSite) {
                   const ret = PathFinder.search(source.pos, this.room.storage.pos, { maxRooms: 1 });
@@ -461,7 +468,7 @@ class Hive {
   }
 
   manageMineral() {
-    if (Game.time % 100 === 0 && this.getController().level >= 6) {
+    if (Game.time % 100 === 0 && this.controller.level >= 6) {
       const mem = this.get('mineral') || {};
       const mineral = mem.id ? Game.getObjectById(mem.id) : this.room.find(FIND_MINERALS).onFirst(m => m);
       const extractor = this.getExtractor();
@@ -472,7 +479,7 @@ class Hive {
         })();
 
       if (extractor && container && mineral) {
-        if (mineral.mineralAmount > 0 && mineral.mineralAmount <= this.getStorage().store.getFreeCapacity('energy')) {
+        if (mineral.mineralAmount > 0 && mineral.mineralAmount <= this.storage.store.getFreeCapacity('energy')) {
           const memMiner = this.get('mineralMiner') && Game.getObjectById(this.get('mineralMiner'));
           const miner = memMiner || this.getRoom().find(FIND_MY_CREEPS, {
             filter: (creep) => creep.memory.job === 'miner' && creep.memory.source === mineral.id,
@@ -543,7 +550,7 @@ class Hive {
             const w3c2m4 = [WORK, WORK, WORK, MOVE, MOVE, MOVE, MOVE, CARRY, CARRY]; // 600
             let body = [...w10m10, ...m5c5]; // 2000
 
-            if (this.getController().level >= 7) {
+            if (this.controller.level >= 7) {
               body = [...w10m10, ...w10m10, CARRY, CARRY, CARRY, CARRY]; // 3200
             }
 
@@ -682,13 +689,13 @@ class Hive {
 
       // finds the controller link
       if (!controllerLink) {
-        this.getController().pos.findInRange(FIND_MY_STRUCTURES, 3, {
+        this.controller().pos.findInRange(FIND_MY_STRUCTURES, 3, {
           filter: (structure) => structure.structureType === STRUCTURE_LINK,
         }).onFirst(link => links.controllerLink = link.id); 
       }
 
       // finds the spawn link
-      this.getStorage() && this.getStorage().pos.findInRange(FIND_MY_STRUCTURES, 2, {
+      this.storage && this.storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
         filter: (structure) => structure.structureType === STRUCTURE_LINK,
       }).onFirst(link => links.mainLink = link.id);
       
@@ -772,7 +779,7 @@ class Hive {
 
   handleRecovery() {
     if (!this.spawn.spawning) {
-      const storage = this.getStorage();
+      const storage = this.storage;
 
       if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 10000) {
         this.spawn.createDrone('hauler', [MOVE,CARRY,MOVE,CARRY,MOVE,CARRY]);
@@ -783,36 +790,29 @@ class Hive {
     }
   }
 
-  run() {
-    try {
-      if (!this.getSpawn()) return;
+  handleRoomMode() {
+    let mode = this.get('mode') || 'standard';
+      if (Game.time % 15 === OK) {
+        // todo: recovery should be udpated to check energy or Memory before counting drones in the room..
+        // const creeps = this.getRoom().find(FIND_MY_CREEPS);
+        // if (creeps.length < 1) {
+        //   mode = 'recovery';
+        //   this.set('mode', 'recovery');
+        // } else if (creeps.length > 0 && mode === 'recovery') {
+        //   mode = 'standard';
+        //   this.set('mode', 'standard');
+        // }
 
-      if (this.get('toSpawn')) this.spawn.spawnCreep();
-      const controllerLevel = this.getController().level;
-
-      // let cpu = Game.cpu.getUsed();
-      const towerEnergy = towerService.run(this.room, this.getTowers());
-      // console.log('tower-cpu', Game.cpu.getUsed() - cpu, towerEnergy);
-
-      let mode = this.get('mode') || 'standard';
-      if (Game.time % 12 === OK) {
-        // console.log(creepCount);
-        const creeps = this.getRoom().find(FIND_MY_CREEPS);
-        if (creeps.length < 1) {
-          mode = 'recovery';
-          this.set('mode', 'recovery');
-        } else if (creeps.length > 0 && mode === 'recovery') {
-          mode = 'standard';
-          this.set('mode', 'standard');
-        }
-
+        // if I find targets, put them in memory!
         const buildTargets = this.room.find(FIND_CONSTRUCTION_SITES);
         if (mode === 'standard' && buildTargets.length > 0) {
           mode = 'expanding';
           this.set('mode', 'expanding');
-        } else if (mode === 'expanding' && (buildTargets.length === 0 || !this.getStorage())) {
+          this.set('build-targets', buildTargets.map(t => t.id));
+        } else if (mode === 'expanding' && (buildTargets.length === 0 || !this.storage)) {
           mode = 'standard';
           this.set('mode', 'standard');
+          this.set('build-targets', undefined);
         }
       }
 
@@ -832,6 +832,23 @@ class Hive {
         // default:
         //   break;
       }
+
+    return mode;
+  }
+
+  run() {
+    try {
+      if (!this.getSpawn()) return;
+      this.init();
+
+      if (this.get('toSpawn')) this.spawn.spawnCreep();
+      const controllerLevel = this.controller.level;
+
+      // let cpu = Game.cpu.getUsed();
+      const towerEnergy = towerService.run(this.room, this.getTowers());
+      // console.log('tower-cpu', Game.cpu.getUsed() - cpu, towerEnergy);
+
+      let mode = this.handleRoomMode();
 
       // the default spawn shoots healing rays sometimes
       // if (this.room.energyAvailable > 1000) this.spawn.rechargeCreeps();
