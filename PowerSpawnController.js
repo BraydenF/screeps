@@ -2,18 +2,22 @@ const config = require('config');
 const TaskController = require('TaskController');
 
 class PowerSpawnController {
+  get taskController() {
+    return this.hive.taskController;
+  }
+
   constructor(spawn) {
     this.spawn = spawn;
     this.room = spawn.room;
-		this.taskController = new TaskController(this.room);
+    this.hive = global.hives[this.room.roomName];
 
-    if (!this.room.memory.powerSpawn) {
-    	this.powerSpawn = this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_POWER_SPAWN } }).onFirst(f => f);
-    	if (this.powerSpawn) {
-    		this.room.memory.powerSpawn = { id: this.powerSpawn.id };	
-    	}
+    if (this.room.memory.powerSpawn) {
+      this.powerSpawn = Game.getObjectById(this.room.memory.powerSpawn.id);
     } else {
-			this.powerSpawn = Game.getObjectById(this.room.memory.powerSpawn.id);
+      this.powerSpawn = this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_POWER_SPAWN } }).onFirst(f => f);
+      if (this.powerSpawn) {
+        this.room.memory.powerSpawn = { id: this.powerSpawn.id }; 
+      }
     }
   }
 

@@ -20,6 +20,9 @@ const TERMINAL_TARGET_ENERGY = 10000;
  */
 class TerminalController {
 	// static createOrder() - create a market order, requests resources to complete it
+	get taskController() {
+		return this.hive.taskController;
+	}
 
 	constructor(terminal) {
 		if (typeof terminal === 'string') terminal = Game.getObjectById(terminal);
@@ -27,7 +30,7 @@ class TerminalController {
 		this.terminal = terminal;
 		this.room = this.terminal.room;
 		this.storage = this.room.storage;
-		this.taskController = new TaskController(this.room);
+		this.hive = global.hives[this.room.name];
 		this.marketController = new MarketController(this.room);
 
 		const mem = Memory.rooms[this.room.name].terminal || {};
@@ -93,7 +96,6 @@ class TerminalController {
 	}
 
 	manageStore() {
-		const job = this.get('job');
 		const requestedResources = this.get('requestedResources') || { energy: 10000 };
     const resources = requestedResources && Object.keys(requestedResources);
 
@@ -101,19 +103,14 @@ class TerminalController {
     let unloadTask = [];
 
     Object.keys(this.terminal.store).forEach(resource => {
-      if (typeof requestedResources[resource] === 'undefined' && (!job || job.resource !== resource)) {
-        unloadTask = this.taskController.createTransferTask(resource, this.terminal, this.storage);
+      if (typeof requestedResources[resource] === 'undefined' || this.terminal.store.getUsedCapacity(resource) >= requestedResources[resource] + 1000) {
+        unloadTask = [...unloadTask, ...this.taskController.createTransferTask(resource, this.terminal, this.storage)];
       }
     });
 
-    const energyAmount = this.terminal.store['energy'];
-    if (unloadTask.length === 0 && energyAmount > requestedResources['energy'] && energyAmount > this.storage) {
-      unloadTask = this.taskController.createTransferTask('energy', this.terminal, this.storage.store['energy']);
-    }
-
     resources.forEach(resource => {
       if (requestedResources[resource] > this.terminal.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
-        loadTask = this.taskController.createTransferTask(resource, this.storage, this.terminal);
+        loadTask = [...loadTask, ...this.taskController.createTransferTask(resource, this.storage, this.terminal)];
       }
     });
 

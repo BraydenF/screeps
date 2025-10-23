@@ -59,32 +59,28 @@ class Drone extends BaseCreep {
   }
 
   static globalizeDrones() {
+    if (!global.drones) global.drones = {};
     for (const name in Game.creeps) {
       const creep = Game.creeps[name];
 
-      if (!global.drones[name] && creep.memory.role === 'drone') {
+      if (!global.drones[name] && creep && creep.memory.role === 'drone') {
         const drone = new Drone(creep);
         global.drones[name] = drone;
 
-        drone.run();
+        // distributes creeps to creeps to each room
+        const hr = creep.memory.homeRoom;
+        const key = `${hr}-creeps`;
+        if (!global[key]) global[key] = [];
+        global[key].push(creep);
       }
     }
   }
 
   static runDrones(drones = {}) {
     for (const name in drones) {
-      const drone = Game.creeps[name] && global.drones[name];
-
-      if (drone) {
-        drone.run();
-
-        // ensures the drone is available to its hive
-        const hr = drone.creep.memory.homeRoom;
-        const hh = hr && global.hives[hr];
-        if (hh && !hh.drones[name]) hh.addDrone(drone);
-      } else {
-        global.drones[name] = undefined;
-      }
+      const drone = global.drones[name];
+      if (drone && drone.creep) drone.run();
+      else global.drones[name] = undefined;
     }
   }
 
@@ -1174,9 +1170,9 @@ class Drone extends BaseCreep {
     try {
       const prevCpu = this.get('totalCpu');
       let cpu = Game.cpu.getUsed();
-      if (this.creep.memory.targetRoom && Game.cpu.bucket < 40) {
-        return; // external creeps turn off before internal creeps
-      }
+      // if (this.creep.memory.targetRoom && Game.cpu.bucket < 40) {
+      //   return; // external creeps turn off before internal creeps
+      // }
 
       // if (Game.cpu.tickLimit < 1) return console.log(Game.cpu.tickLimit);
       // this.eolSequence();
@@ -1194,8 +1190,8 @@ class Drone extends BaseCreep {
       this.set('totalCpu', totalCpu);
       this.set('avgCpu', totalCpu / this.creep.ticksToLive);
     } catch (e) {
-      console.log(`${this.creep.name} ${this.creep.room.name}`,':', e);
-      // throw e;
+      // console.log(`${this.name} ${this.creep.room.name}`,':', e);
+      throw e;
     }
   }
 }

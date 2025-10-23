@@ -75,46 +75,42 @@ function countResource(resource) {
 module.exports.loop = function () {
   // defines the top of the tick for report viewing
   const reportTime = 10;
-  if (Game.time % reportTime === 0) console.log('*****************************************************************');
-  // console.log('*****************************************************************');
+  if (Game.time % reportTime === OK) console.log('*****************************************************************');
   const totalData = { energy: 0, battery: 0 };
-
   let totalHiveCpu = Game.cpu.getUsed();
 
   if (global.hives) {
+    Drone.globalizeDrones();
+
     for (const roomName of Object.keys(global.hives)) {
       const hive = global.hives[roomName];
+
       if (hive instanceof Hive) {
         const cpu = Game.cpu.getUsed();
         const data = hive.run();
-
-        // console.log('hive.creeps', Object.keys(hive.creeps).length);
 
         // if (data) {
         //   totalData.energy = totalData.energy + data.energy;
         //   totalData.battery = totalData.battery + data.battery;
         // }
 
-        if (Game.time % reportTime === 0) hive.report(cpu);
+        if (Game.time % reportTime === OK) hive.report(cpu);
       }
     }
+
+    Memory.data = totalData;
   } else {
     global.hives = {};
   }
-
-  Memory.data = totalData;
   totalHiveCpu = Game.cpu.getUsed() - totalHiveCpu;
 
   let droneCpu = Game.cpu.getUsed();
-  if (Game.cpu.bucket > 35) {
-    if (global.drones) Drone.runDrones(global.drones);
-    else global.drones = {};
-    if (Game.cpu.getUsed() < 20) Drone.globalizeDrones();
+  if (global.drones && Game.cpu.bucket > 35) {
+    Drone.runDrones(global.drones);
   }
+  droneCpu = Game.cpu.getUsed() - droneCpu;
 
-  if (Game.cpu.bucket > 15) {
-    PowerCreep.run();
-  }
+  PowerCreep.run();
 
   // some init and cleanup code has been placed behind a CPU wall!
   if (Game.cpu.getUsed() < 20 && Game.cpu.bucket > 100) {
@@ -136,5 +132,5 @@ module.exports.loop = function () {
 
   const fincpu = Game.cpu.getUsed();
   // const droneCpuReprt = `drone-cpu ${Game.cpu.getUsed() - droneCpu).toFixed(4)}`;
-  console.log('hive-cpu', totalHiveCpu.toFixed(4), 'drone-cpu', (Game.cpu.getUsed() - droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), `TL:${Game.cpu.tickLimit}`, `B:${Game.cpu.bucket}`);
+  console.log('hive-cpu', totalHiveCpu.toFixed(4), 'drone-cpu', (droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), `TL:${Game.cpu.tickLimit}`, `B:${Game.cpu.bucket}`);
 }

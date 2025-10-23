@@ -53,8 +53,14 @@ class LabController {
 		return idleLab;
 	}
 
+	get taskController() {
+		return this.hive.taskController;
+	}
+
 	constructor(room) {
 		this.room = room;
+		this.hive = global.hives[room.roomName];
+
 		if (typeof this.room.memory['labController'] === 'undefined') this.room.memory['labController'] = { labs: {} };
 		const mem = this.room.memory['labController'];
 		if (!mem.labs) mem.labs = {};
@@ -66,7 +72,6 @@ class LabController {
 
 		this.storage = this.room.storage;
 		this.labs = this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_LAB } });
-		this.taskController = new TaskController(this.room);
 	    // global[room.name.toLowerCase()].runLab = LabController.startLabFactory(this.room);
 	}
 
