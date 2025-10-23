@@ -49,11 +49,6 @@ function roll() {
 global.roll = roll;
 
 const utils = {
-    /**
-     * https://stackoverflow.com/a/3983830
-     * @params probas number[]
-     * @params funcs function[]
-     */
     randomColor: function randomColor() {
         return Math.floor(Math.random()*16777215).toString(16);
     },
@@ -79,7 +74,7 @@ Array.prototype.rand = function() {
 };
 
 Array.prototype.first = function() {
-  return Array.isArray(this) && this.length ? this[0] : undefined;
+  return this.length ? this[0] : undefined;
 }
 
 // performs the provided function on the first element of the array if it exists
