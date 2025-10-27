@@ -50,16 +50,16 @@
  // Sell wire when we have enough and global power level is 0
  // - will stop selling once we can continue to manufacture further.
 const marketConfig = {
-  concentrate: { min: 300000 },
-  switch: { min: 100000 },
-  battery: { min: 185, max: 200, minStock: 100000, sellPrice: 154.275 }, // 154
-  utrium_bar: { minStock: 100000, sellPrice: 390.553 },
-  lemergium_bar: { minStock: 65000, sellPrice: 889.553 },
- 	// U: { min: 5, max: 28.625 },
- 	// keanium_bar: { min: 180, max: 250 },
- 	// wire: { min: 7000, max: 10000 },
-  // condensate: { min: 25000, max: 27000 },
-  reductant: { min: 450.250, max: 460, minStock: 100000, sellPrice: 455.735 },
+  concentrate: { minPrice: 300000 },
+  switch: { minPrice: 100000 },
+  battery: { minPrice: 155.009, maxPrice: 200, minStock: 100000, sellOrderPrice: 181.275 }, // 154
+  utrium_bar: { minStock: 100000, sellOrderPrice: 390.553 },
+  lemergium_bar: { minStock: 65000, sellOrderPrice: 889.553 },
+ 	// U: { minPrice: 5, maxPrice: 28.625 },
+ 	// keanium_bar: { minPrice: 180, maxPrice: 250 },
+ 	// wire: { minPrice: 7000, maxPrice: 10000 },
+  // condensate: { minPrice: 25000, maxPrice: 27000 },
+  reductant: { minPrice: 450.250, maxPrice: 460, minStock: 100000, sellOrderPrice: 455.735 },
 }
 
 class MarketController {
@@ -190,10 +190,10 @@ class MarketController {
 
   createSellOrder(resource, amount) {
     const config = this.getConfig(resource);
-    if (config && config.sellPrice) {
+    if (config && config.sellOrderPrice) {
       const hasStock = !config.minStock || this.storage.store.getUsedCapacity(resource) >= config.minStock;
 
-      if (this.requestMet(resource) && hasStock && config.sellPrice) {
+      if (this.requestMet(resource) && hasStock && config.sellOrderPrice) {
         const order = Object.values(Game.market.orders).reduce((acc, order) => {
           return order.type === ORDER_SELL && order.resourceType === resource && order.remainingAmount > 0 ? order : acc;
         }, {});
@@ -202,7 +202,7 @@ class MarketController {
           return Game.market.createOrder({
             type: ORDER_SELL,
             resourceType: resource,
-            price: config.sellPrice,
+            price: config.sellOrderPrice,
             totalAmount: amount,
             roomName: this.room.name   
           });
@@ -226,7 +226,7 @@ class MarketController {
 
     if (config) {
       const order = Game.market.getAllOrders({ type: ORDER_BUY, resourceType: resource })
-        .filter(order => order.price > config.min && order.roomName.includes('N')).onFirst(o => o);
+        .filter(order => order.price > config.minPrice && order.roomName.includes('N')).onFirst(o => o);
 
       if (order) {
         const amount = order.remainingAmount < this.terminal.store[resource] ? order.remainingAmount : this.terminal.store[resource];
@@ -235,22 +235,22 @@ class MarketController {
     }
   }
 
-  // preview(orderId, amount) {
-  //   const order = Game.market.getOrderById(orderId);
+  preview(orderId, amount) {
+    const order = Game.market.getOrderById(orderId);
 
-  //   if (order) {
-  //     const energyCost = Game.market.calcTransactionCost(amount, spawn.room.name, order.roomName);
-  //     console.log('ID:', orderId, 'room', order.roomName);
-  //     console.log('Energy:', new Intl.NumberFormat().format(energyCost));
-  //     console.log('Credits:', new Intl.NumberFormat().format(amount * order.price));
-  //   }
-  // }
+    if (order) {
+      const energyCost = Game.market.calcTransactionCost(amount, this.room.name, order.roomName);
+      console.log('ID:', orderId, 'room', order.roomName);
+      console.log('Energy:', new Intl.NumberFormat().format(energyCost));
+      console.log('Credits:', new Intl.NumberFormat().format(amount * order.price));
+    }
+  }
 
-  // deal(orderId, amount) {
-  //   console.log(orderId, amount, spawn.room.name);
-  //   return Game.market.deal(orderId, amount, spawn.room.name);
-  // }
-  // 
+  deal(orderId, amount) {
+    console.log(orderId, amount, this.room.name);
+    return Game.market.deal(orderId, amount, this.room.name);
+  }
+
   scan() {
   	// is it better to have some market data on hand?
   }

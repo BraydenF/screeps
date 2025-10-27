@@ -54,7 +54,7 @@ class LabController {
 	}
 
 	get taskController() {
-		return this.hive.taskController;
+		return this.hive && this.hive.taskController;
 	}
 
 	constructor(room) {
@@ -143,7 +143,7 @@ class LabController {
 
 	loadLab(lab, resource, amount) {
 		const task = this.taskController.createTransferTask(resource, this.storage, lab);
-    return this.taskController.issueTask(task, '➕⚗️');
+  	return this.taskController.issueTask(task, '➕⚗️');
 	}
 
 	unloadLab(lab) {
@@ -425,7 +425,7 @@ class LabController {
 
 			if (lab && mem) {
 				// update to use a manageStore function
-				this.manageStore(lab, mem);
+				this.taskController && this.manageStore(lab, mem);
 
 				if (mem.target) {
 					const targetCreep = Game.creeps[mem.target];

@@ -108,7 +108,7 @@ class FactoryController {
 				job = { resource: compressedResource, amount: 5000 }; // costs 25k mineral
 			}
 			else if (resource === 'O' && this.storage.store.getUsedCapacity(resource) >= 10000) {
-				job = { resource: compressedResource, amount: 10000 }; // costs 25k mineral
+				job = { resource: compressedResource, amount: 5000 }; // costs 25k mineral
 			}
 		});
 

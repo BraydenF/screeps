@@ -183,7 +183,7 @@ class SpawnController {
       else if (cost >= 500) body = [WORK, WORK, WORK, ...m2c2];
       else if (sourceIds && sourceIds.length === 1) body = [...w5, ...m2c2];
 
-      this.setNextSpawn({ job: 'upgrader', body });
+      return this.createDrone('upgrader', body);
     }
   }
 

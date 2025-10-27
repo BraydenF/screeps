@@ -26,13 +26,53 @@ class BaseCreep {
     return Game.creeps[this.name];
   }
 
+  get taskQueue() {
+    const tasks = this.get('taskQueue');
+    return new Queue(tasks);
+  }
+
+  get task() {
+    return this.get('task');
+  }
+
+  set task(task) {
+    // this.task = task;
+    if (this.memory.task !== task) this.set('task', task);
+  }
+
+  get resource() {
+    return this.get('resource');
+  }
+
+  set resource(resource) {
+    // this.resource = resource;
+    if (this.memory.resource !== resource) this.set('resource', resource);
+  }
+
+  get target() {
+    return this.get('target');
+  }
+
+  set target(target) {
+    // this.target = target;
+    if (this.memory.target !== target) this.set('target', target);
+  }
+
+  get amount() {
+    return this.get('amount');
+  }
+
+  set amount(amount) {
+    // this.amount = amount;
+    if (this.creep.memory.amount !== amount) this.creep.memory.amount = amount;
+  }
+
 	constructor(creep) {
     if (!creep) console.log('huh?>>')
     const memory = creep.memory || {};
     this.name = creep.name;
 		// this.creep = creep;
     this.task = memory.task ? memory.task : 'standby';
-    this.taskQueue = new Queue(memory.taskQueue);
   }
 
   get(key) {
@@ -48,17 +88,18 @@ class BaseCreep {
   }
 
   setTask(task, target = null, message = null) {
+    this.task = task;
     this.set('task', task);
     if (target) this.setTarget(target);
     if (message) this.creep.say(message);
   }
 
   getTaskQueue() {
-    return this.taskQueue;
+    const tasks = this.get('taskQueue');
+    return new Queue(tasks);
   }
 
   setTaskQueue(tasks, message) {
-    this.taskQueue = new Queue(tasks);
     this.set('taskQueue', tasks);
     if (message) this.creep.say(message);
   }
@@ -656,41 +697,33 @@ class BaseCreep {
     this.creep.memory = {};
   }
 
+  processQueue() {
+    // task queue
+    const queue = this.getTaskQueue();
+    if (!queue.isEmpty) {
+      const qtask = queue.dequeue();
+      if (typeof qtask === 'object') {
+        if (qtask.name) {
+          this.setTask(qtask.name);
+          if (qtask.target) this.setTarget(qtask.target);
+          if (qtask.resource) this.set('resource', qtask.resource);
+        }
+      } else {
+        this.setTask(qtask);
+      }
+    }
+  }
+
   runTask() {
     try {
-      const spawn = this.getSpawn();
-      let target = this.get('target');
-      let resource = this.get('resource');
-      let amount = this.get('amount');
-      const flag = this.getFlag();
+      let task = this.task;
+      let target = this.target;
+      let resource = this.resource;
+      let amount = this.amount;
       let status;
 
-      // task queue
-      if ((this.memory.task === 'queue' || this.hasTask('standby')) && this.hasTaskQueued()) {
-        const queue = this.getTaskQueue();
-        const task = queue.peek();
-
-        if (typeof task === 'object') {
-          if (task.name) {
-            this.creep.memory.task = task.name;
-            this.setTask(task.name);
-            if (task.target) {
-              target = task.target;
-              this.setTarget(task.target);
-            }
-            if (task.resource) {
-              resource = task.resource;
-              this.set('resource', task.resource);
-            }
-          }
-          queue.dequeue();
-        } else if (typeof task === 'string') {
-          this.creep.memory.task = queue.dequeue();
-        }
-      }
-
       // basic task operation
-      switch (this.memory.task) {
+      switch (task) {
         case 'moveTo':
           status = this.moveTo(target);
           if (this.creep.pos.getRangeTo(target) === 0) this.enterStandby();
@@ -746,6 +779,7 @@ class BaseCreep {
               if (nearestTower) target = nearestTower; 
             }
 
+            const spawn = this.getSpawn();
             const spawnRoom = spawn && spawn.room;
             const upgradeContainer = spawnRoom.memory.upgradeContainer && Game.getObjectById(spawnRoom.memory.upgradeContainer);
             if (!target && upgradeContainer && upgradeContainer.store.getUsedCapacity(RESOURCE_ENERGY) <= 1800) {
@@ -842,6 +876,7 @@ class BaseCreep {
           break;
 
         case 'reclaim':
+          const spawn = this.getSpawn();
           if (!this.creep.pos.isNearTo(spawn)) status = this.moveTo(spawn);
           else status = spawn.recycleCreep(this.creep);
           break;
@@ -894,8 +929,9 @@ class BaseCreep {
           break;
 
         case 'flag':
+          const flag = this.getFlag();
           if (flag) {
-            status = this.moveTo(flag);
+            this.moveTo(flag);
             const distanceToFlag = this.creep.pos.getRangeTo(flag);
             if (distanceToFlag <= 5) {
               if (flag.memory.task) this.setTask(flag.memory.task);
