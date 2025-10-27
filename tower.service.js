@@ -73,12 +73,10 @@ const towerService = {
   },
   run: function(room, towers) {
     // let cpu = Game.cpu.getUsed();
-    // const prevTowerEnergy = room.memory.prevTowerEnergy || 0;
     const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
     if (Game.time % 5 !== OK && hostileTargets.length === 0) return 0;
     else if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
 
-    // const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
     const repairMultiplier = 1 * room.controller.level * 0.5;
     let repairTargets;
     if (hostileTargets.length === OK) {
@@ -94,8 +92,10 @@ const towerService = {
       }});
     }
 
-    let towerEnergy = 0;
-    room.memory.tEnergy = {};
+    if (hostileTargets.length === OK && repairTargets.length === OK) return; // no targets
+
+    // let towerEnergy = 0;
+    // room.memory.tEnergy = {};
     towers.forEach((tower) => {
       if (hostileTargets.length > 0) {
         // if (damagedCreep) {
@@ -108,7 +108,7 @@ const towerService = {
         if (target) tower.repair(target);
       }
 
-      towerEnergy = towerEnergy + tower.store.getUsedCapacity('energy');
+      // towerEnergy = towerEnergy + tower.store.getUsedCapacity('energy');
       if (tower.store.getUsedCapacity('energy') <= 400) {
         room.memory.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
       }
@@ -121,7 +121,7 @@ const towerService = {
     //   console.log('additional', 'tHauler', towerEnergy);
     // }
 
-    return towerEnergy;
+    // return towerEnergy;
   }
 }
 

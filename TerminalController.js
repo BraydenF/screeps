@@ -20,8 +20,12 @@ const TERMINAL_TARGET_ENERGY = 10000;
  */
 class TerminalController {
 	// static createOrder() - create a market order, requests resources to complete it
+	get hive() {
+		return global.hives[this.room.name];
+	}
+
 	get taskController() {
-		return this.hive.taskController;
+		return global.hives[this.room.name].taskController;
 	}
 
 	constructor(terminal) {
@@ -30,7 +34,7 @@ class TerminalController {
 		this.terminal = terminal;
 		this.room = this.terminal.room;
 		this.storage = this.room.storage;
-		this.hive = global.hives[this.room.name];
+		// this.hive = global.hives[this.room.name];
 		this.marketController = new MarketController(this.room);
 
 		const mem = Memory.rooms[this.room.name].terminal || {};
@@ -167,16 +171,23 @@ class TerminalController {
 	    	Object.keys(this.terminal.store).forEach(resource => {
     			const config = this.marketController.getConfig(resource);
 	    		if (config && config.sellPrice) {
-		    		// this.marketController.sell(resource);
-	    			this.marketController.createSellOrder(resource, 1000);
+		    		if (config.sellOrderPrice) {
+							this.marketController.createSellOrder(resource, 1000);
+		    		} else if (config.minPrice) {
+		    			this.marketController.sell(resource);
+		    		}
 	    		}
 	    	});
 
 	    	// handle requests for resources
-		    if (Game.time % 15 === OK) Object.keys(Memory.rooms).forEach(roomName => {
+	    	// let cpu = Game.cpu.getUsed();
+		    if (Game.time % 33 === OK) Object.keys(global.hives).forEach(roomName => {
+		    	const hive = global.hives[roomName];
 		    	const room = Game.rooms[roomName];
-		    	if (room && room.terminal && room.terminal.my && Memory.rooms[roomName] && Memory.rooms[roomName].terminal && room.name !== this.room.name) {
-		    		const requests = Memory.rooms[roomName].terminal.requests;
+
+		    	if (hive.terminalController && room.name !== this.room.name) {
+		    		const requests = hive.terminalController.get('requests'); // Memory.rooms[roomName].terminal.requests;
+
 		    		requests && Object.keys(requests).forEach(resource => {
 		    			if (resource === 'energy' && this.storage.store.getUsedCapacity('energy') >= 55000 && this.terminal.store.getUsedCapacity('energy') >= 10000) {
 		    				// if its an energy request, just fill it.
@@ -188,15 +199,21 @@ class TerminalController {
 		    					}
 		    				}
 		    			} else {
-			    			// what about how much resource they have already??
-			    			const amount = this.storage.store.getUsedCapacity(resource) > requests[resource] ? requests[resource] : this.storage.store.getUsedCapacity(resource);
-			    			if (!this.transfering(resource) && amount > 0 && room.storage.store.getUsedCapacity(resource) < requests[resource]) {
-			    				this.createTransfer(roomName, resource, amount);
-			    				// requests are filled when possible, with no limit
+			    			// what about how much resource they have already?
+			    			if (this.terminal.store[resource] >= 0) {
+			    				const transferAmount = this.terminal.store[resource] > 5000 ? 5000 : this.terminal.store[resource];
+			    				const status = this.sendResource(resource, transferAmount, roomName);
+			    			} else {
+			    				const amount = this.storage.store.getUsedCapacity(resource) > requests[resource] ? requests[resource] : this.storage.store.getUsedCapacity(resource);
+				    			if (!this.transfering(resource) && amount > 0) {
+				    				this.createTransfer(roomName, resource, amount);
+				    				// requests are filled when possible, with no limit
+				    			}
 			    			}
 		    			}
 		    		});
 		    	}
+		    	// console.log('handle-requests', Game.cpu.getUsed() - cpu);
 		    });
 
 		    this.set('transfers', transfers);

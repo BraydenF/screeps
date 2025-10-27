@@ -58,6 +58,7 @@ class Drone extends BaseCreep {
     return new Drone(creep);
   }
 
+  // todo: drones are being referenced by the Hive long after they are gone. This will likely need to be updated to an object instead of an Array to allow for removal of creeps
   static globalizeDrones() {
     if (!global.drones) global.drones = {};
     for (const name in Game.creeps) {
@@ -70,8 +71,8 @@ class Drone extends BaseCreep {
         // distributes creeps to creeps to each room
         const hr = creep.memory.homeRoom;
         const key = `${hr}-creeps`;
-        if (!global[key]) global[key] = [];
-        global[key].push(creep);
+        if (!global[key]) global[key] = {};
+        global[key][name] = creep;
       }
     }
   }
@@ -80,7 +81,14 @@ class Drone extends BaseCreep {
     for (const name in drones) {
       const drone = global.drones[name];
       if (drone && drone.creep) drone.run();
-      else global.drones[name] = undefined;
+      else {
+        global.drones[name] = undefined;
+        const mem = Memory.creeps[name];
+        if (mem) {
+          const hr = Memory.creeps[name].homeRoom;
+          global[`${hr}-creeps`][name] = undefined; 
+        }
+      }
     }
   }
 
@@ -486,9 +494,14 @@ class Drone extends BaseCreep {
           const { link, container } = this.getSourceStores();
 
           if (this.getUsedCapacity(RESOURCE_ENERGY) > 0) {
-            // can I cache this???
-            const nearbyEmptyStores = this.creep.pos.findInRange(FIND_MY_STRUCTURES, 1)
-              .filter(structure => structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 && ((link && structure.id !== link.id) || (container && structure.id !== container.id)));
+            let nearbyStores = this.get('nearbyStores');
+            if (nearbyStores) {
+              nearbyStores = nearbyStores.map(id => Game.getObjectById(id));
+            } else {
+              nearbyStores = this.creep.pos.findInRange(FIND_MY_STRUCTURES, 1);
+              this.set('nearbyStores', nearbyStores.map(s => s.id));
+            }
+            const nearbyEmptyStores = nearbyStores.filter(structure => structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0 && ((link && structure.id !== link.id) || (container && structure.id !== container.id)));
 
             // I have energy
             if (nearbyEmptyStores.length > 0) {
@@ -754,7 +767,11 @@ class Drone extends BaseCreep {
             if (this.isEnergyEmpty() && resources.length && resources[0] !== 'energy') {
               this.setTask('unload');
               this.set('resource', resources[0]);
-              this.setTarget(this.getStorage());
+              if (this.room.storage.store.getFreeCapacity(resources[0]) >= 1000) {
+                this.setTarget(this.getStorage());
+              } else if (this.room.terminal && this.room.terminal.store.getFreeCapacity(resources[0]) >= 1000) {
+                this.setTarget(this.room.terminal.id);
+              }
             }
 
             this.setTask('unload');
@@ -845,10 +862,20 @@ class Drone extends BaseCreep {
             }
           } else {
             // instead of 
-            const buildTargets = room.memory['build-targets'] ? room.memory['build-targets'].map(id => Game.getObjectById(id)) : [];
-            // const buildTargets = room.find(FIND_CONSTRUCTION_SITES);
-            if (buildTargets.length > 0) {
-              this.setTask('build', this.creep.pos.findClosestByPath(buildTargets).id);
+            let buildTargets = room.memory['build-targets'].length ? room.memory['build-targets'].reduce((acc, id) => {
+              const target = Game.getObjectById(id);
+              if (target) {
+                acc.push(target);
+              } else {
+                room.memory['build-targets'][id] = undefined;
+              }
+              return acc;
+            }, []) : this.room.find(FIND_CONSTRUCTION_SITES);
+
+            if (buildTargets.length > 0 && buildTargets[0]) {
+              // this.setTask('build', this.creep.pos.findClosestByPath(buildTargets).id);
+              this.setTask('build', buildTargets[0].id);
+              // console.log(room.name, 'nearest', this.creep.pos.findClosestByPath(buildTargets).id);
             } else {
               // move repair targets to a by the room 
               const repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
@@ -1170,6 +1197,8 @@ class Drone extends BaseCreep {
     try {
       const prevCpu = this.get('totalCpu');
       let cpu = Game.cpu.getUsed();
+      // this.init();
+
       // if (this.creep.memory.targetRoom && Game.cpu.bucket < 40) {
       //   return; // external creeps turn off before internal creeps
       // }
@@ -1179,11 +1208,15 @@ class Drone extends BaseCreep {
       // if (utils.roll() > 96) this.creep.say(utils.randomSay());
 
       // testing a small cpu cost for checking what job thing to do
-      if (this.isStandby() && !this.hasTaskQueued() && Game.cpu.bucket > 40) {
-        this.processJob();
+      if (this.isStandby()) {
+        if (!this.hasTaskQueued() && Game.cpu.bucket > 40) {
+          this.processJob();
+        } else if (this.hasTaskQueued() && Game.cpu.bucket > 20) {
+          this.processQueue();
+        }
+      } else {
+        this.runTask();
       }
-
-      this.runTask();
 
       // stat tracking!
       const totalCpu = prevCpu + (Game.cpu.getUsed() - cpu);
