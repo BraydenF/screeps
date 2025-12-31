@@ -1,5 +1,6 @@
 const Queue = global.Queue;
 const GameMap = require('GameMap');
+const productionNotifier = require('productionNotifier');
 
 /**
  * 
@@ -43,6 +44,15 @@ class PowerCreep {
 
   getTarget() {
     return Game.getObjectById(this.get('target'));
+  }
+
+  setTarget(target) {
+    if (typeof target === 'object' && target.id) target = target.id;
+    if (typeof target === 'string') {
+      this.set('target', target);
+    } else if (!target) {
+      this.set('target', null)
+    }
   }
 
   hasTask(task) {
@@ -109,9 +119,7 @@ class PowerCreep {
         if (route.length >= 2) {
           return this.pc.moveTo(exit, { reusePath: 15, visualizePathStyle: { stroke: '#ffffff' } });
         } else {
-          const ret = PathFinder.search(this.pc.pos, exit, {
-            maxRooms: 1,
-          });
+          const ret = PathFinder.search(this.pc.pos, exit, { maxRooms: 2 });
           return this.pc.move(this.pc.pos.getDirectionTo(ret.path[0]));
         }
       }
@@ -151,7 +159,7 @@ class PowerCreep {
   }
 
   load(target = null, resource = RESOURCE_ENERGY, amount = null) {
-    console.log('loading', target, resource, amount)
+    // console.log('loading', target, resource, amount)
     if (typeof target === 'string') target = Game.getObjectById(target);
 
     if (target) {
@@ -198,6 +206,7 @@ class PowerCreep {
       let target = this.get('target');
       let resource = this.get('resource');
       let amount = this.get('amount');
+      const room = this.pc.room;
 
       switch (this.get('task')) {
         case 'moveTo':
@@ -213,8 +222,8 @@ class PowerCreep {
 
         case 'unload':
           // non energy resources default to storage.
-          if (!target) {
-            target = this.getStorage();
+          if (!target && this.pc.room.storage) {
+            target = this.pc.room.storage;
           }
 
           // nothing to unload or target the is full
@@ -227,43 +236,78 @@ class PowerCreep {
           }
           break;
 
+        case 'enablePower':
+          // enable power
+          if (this.pc.pos.isNearTo(controller)) {
+            const status = this.pc.enableRoom(controller);
+            if (status === OK) this.enterStandby();
+          } else {
+            this.pc.moveTo(controller);
+          }
+          break;
+
         default:
         	// target room behavior is ran by default.
-		      if (this.pc.memory.targetRoom === this.pc.room.name) {
-		      	const controller = this.pc.room.controller;
-		      	if (controller.isPowerEnabled) {
-		      		const factory = this.pc.powers[PWR_OPERATE_FACTORY] ? (() => {
-		      			const factoryMem = this.pc.room.memory.factory;
+		      if (this.pc.memory.targetRoom === room.name) {
+		      	const controller = room.controller;
+            if (!controller.isPowerEnabled) {
+              this.setTask('enablePower');
+              break;
+            }
 
-		      			if (factoryMem.id && factoryMem.job && factoryMem.job.level === this.pc.powers[PWR_OPERATE_FACTORY].level && factoryMem.job.ready && this.pc.powers[PWR_OPERATE_FACTORY]) {
-		      				return Game.getObjectById(this.pc.room.memory.factory.id);
-		      			}
-		      		})() : null;
+            const hasFactoryBoost = this.pc.powers[PWR_OPERATE_FACTORY].cooldown === OK;
+            if (hasFactoryBoost) {
+              if (this.pc.store.getUsedCapacity('ops') < 100 && room.terminal && room.terminal.store.getUsedCapacity('ops') > 0) {
+                this.setTask('load', room.terminal.id);
+                this.set('resource', 'ops');
+                this.set('amount', 100 - this.pc.store.getUsedCapacity('ops'));
+                break;
+              }
 
-		      		if (factory && factory.effects.length === OK && this.pc.powers[PWR_OPERATE_FACTORY].cooldown === OK && this.pc.store.getUsedCapacity('ops') >= 100) {
-		      			this.operateFactory(factory);
-		      		} else
-		      		if (this.pc.powers[PWR_GENERATE_OPS] && this.pc.powers[PWR_GENERATE_OPS].cooldown === OK && this.pc.store.getFreeCapacity('ops') > 0) {
-		      			this.pc.usePower(PWR_GENERATE_OPS);
-		      		} else if (this.pc.room.memory.powerSpawn && this.pc.ticksToLive < 4000) {
-		      			const ps = Game.getObjectById(this.pc.room.memory.powerSpawn.id);
-		      			if (this.pc.pos.isNearTo(ps)) {
-		      				this.pc.renew(ps);
-		      			} else {
-		      				this.pc.moveTo(ps);
-		      			}
-		      		} else {
-		      			// console.log('nothing')
-		      		}
-		      	} else {
-		      		// enable power
-		      		if (this.pc.pos.isNearTo(controller)) {
-		      			this.pc.enableRoom(controller);
-		      		} else {
-		      			this.pc.moveTo(controller);
-		      		}
-		      	}
+              const factory = this.pc.powers[PWR_OPERATE_FACTORY] ? (() => {
+                const factoryMem = room.memory.factory;
+                const hasPowerJob = factoryMem.id && factoryMem.job && factoryMem.job.ready;
+
+                if (hasPowerJob && factoryMem.job.level === this.pc.powers[PWR_OPERATE_FACTORY].level) {
+                  return Game.getObjectById(room.memory.factory.id);
+                }
+              })() : null;
+
+              const factoryNeedsBoost = factory && factory.effects.length === OK;
+              if (factoryNeedsBoost && this.pc.powers[PWR_OPERATE_FACTORY].cooldown === OK) {
+                if (this.pc.store.getUsedCapacity('ops') >= 100) {
+                  this.operateFactory(factory);
+                  break;
+                }
+              }
+            }
+
+            if (this.pc.store.getUsedCapacity('ops') > 200) {
+              this.setTask('unload', room.terminal.id);
+              this.set('resource', 'ops');
+              break;
+            }
+
+            if (this.pc.powers[PWR_GENERATE_OPS] && this.pc.powers[PWR_GENERATE_OPS].cooldown === OK && this.pc.store.getFreeCapacity('ops') > 0) {
+	      			const status = this.pc.usePower(PWR_GENERATE_OPS);
+              if (status === OK) {
+                const opsGenerated = Math.floor(this.pc.powers[PWR_GENERATE_OPS].level / 2) + 1;
+                productionNotifier.incrementCounter('ops', opsGenerated);
+              }
+	      		} else if (room.memory.powerSpawn && this.pc.ticksToLive < 4000) {
+	      			const ps = Game.getObjectById(room.memory.powerSpawn.id);
+	      			if (this.pc.pos.isNearTo(ps)) {
+	      				this.pc.renew(ps);
+	      			} else {
+	      				this.pc.moveTo(ps);
+	      			}
+	      		} else {
+              const ps = Game.getObjectById(room.memory.powerSpawn.id);
+              if (!this.pc.pos.isNearTo(ps)) this.pc.moveTo(ps);
+	      			// console.log('nothing')
+	      		}
 		      } else {
+            console.log(Game.rooms[this.pc.memory.targetRoom]);
 		      	this.moveTo(Game.rooms[this.pc.memory.targetRoom].controller);
 		      }
 

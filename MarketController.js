@@ -59,7 +59,7 @@ const marketConfig = {
  	// keanium_bar: { minPrice: 180, maxPrice: 250 },
  	// wire: { minPrice: 7000, maxPrice: 10000 },
   // condensate: { minPrice: 25000, maxPrice: 27000 },
-  reductant: { minPrice: 450.250, maxPrice: 460, minStock: 100000, sellOrderPrice: 455.735 },
+  reductant: { minPrice: 550.250, maxPrice: 460, minStock: 100000, sellOrderPrice: 550.735 },
 }
 
 class MarketController {
@@ -87,6 +87,16 @@ class MarketController {
     }
 
     return -1;
+  }
+
+  static cleanupOrders() {
+    const orderIds = Object.keys(Game.market.orders);
+    orderIds.forEach(id => {
+      const order = Game.market.getOrderById(id);
+      if (order && !order.active) {
+        Game.market.cancelOrder(order.id);
+      }
+    });
   }
 
 	static scan() {
@@ -195,6 +205,7 @@ class MarketController {
 
       if (this.requestMet(resource) && hasStock && config.sellOrderPrice) {
         const order = Object.values(Game.market.orders).reduce((acc, order) => {
+          if (order.remainingAmount <= 0) Game.market.cancelOrder(order.id); // !order.active
           return order.type === ORDER_SELL && order.resourceType === resource && order.remainingAmount > 0 ? order : acc;
         }, {});
 

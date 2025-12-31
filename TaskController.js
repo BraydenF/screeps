@@ -26,6 +26,12 @@ class TaskController {
     }
   }
 
+  refresh(hive) {
+    this.room = hive.room;
+    this.spawn = hive.spawn;
+    this.tasks = this.room.memory.tasks || [];
+  }
+
   get(key) {
     return this.room.memory[key];
   }
@@ -36,11 +42,19 @@ class TaskController {
 
   addTask(task) {
     if (typeof task !== 'string') task = JSON.stringify(task);
-    this.tasks.enqueue(task);
+    this.tasks.push(task);
+  }
+
+  publishTask (task) {
+    if (typeof task !== 'string') task = JSON.stringify(task);
+
+    if (!this.tasks.includes(task)) {
+      this.tasks.push(task);
+    }
   }
 
   getTask() {
-    let task = this.tasks.dequeue();
+    let task = this.tasks.shift();
     if (typeof task === 'string') task = JSON.parse(task);
     return task;
   }
@@ -54,8 +68,9 @@ class TaskController {
   getFreeDrone() {
     const drones = this.room.find(FIND_MY_CREEPS, { filter: (creep) => {
       if (!creep.memory.targetRoom && (creep.memory.job === 'drone' || creep.memory.job === 'hauler')) {
-        const drone = new global.Drone(creep);
-        return !drone.hasTaskQueued() && drone.isEmpty();
+        return creep.memory.task === 'standby'
+          && Object.keys(creep.store).length === 0
+          && (!creep.memory.taskQueue || creep.memory.taskQueue.length === OK);
       }
     }});
 
@@ -81,7 +96,7 @@ class TaskController {
     return [loadTask, unloadTask];
   }
 
-  issueTask(task, message) {
+  issueTask(task, message = 'task accepted') {
     const drone = this.getFreeDrone();
     if (drone) {
       if (drone.creep.store.getUsedCapacity('energy') >= 0) task = [this.createUnloadTask(this.room.storage, 'energy'), ...task];

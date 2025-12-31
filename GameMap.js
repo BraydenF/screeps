@@ -1,21 +1,20 @@
 const config = require('config');
 
 class GameMap {
-  static getRoom() {
-
-  }
-
-  static isRoomOccupied(roomName) {
-
-  }
-
   static isHighway(roomName) {
     let parsed = /^[WE]([0-9]+)[NS]([0-9]+)$/.exec(roomName);
     return (parsed[1] % 10 === 0) || (parsed[2] % 10 === 0);
   }
 
   static findRoute(fromRoom, toRoom) {
-    return Game.map.findRoute(fromRoom, toRoom, {
+    if (!Memory._routes) Memory._routes = {};
+    const routeKey = `${fromRoom.name}-${toRoom}`;
+
+    if (Memory._routes[routeKey]) {
+      return Memory._routes[routeKey];
+    }
+
+    const route = Game.map.findRoute(fromRoom, toRoom, {
       routeCallback(roomName) {
         let parsed = /^[WE]([0-9]+)[NS]([0-9]+)$/.exec(roomName);
         let isHighway = (parsed[1] % 10 === 0) || (parsed[2] % 10 === 0);
@@ -30,6 +29,9 @@ class GameMap {
         }
       }
     });
+
+    Memory._routes[routeKey] = route;
+    return route;
   }
 
   static findNearestHallway(roomName) {
@@ -145,10 +147,6 @@ class GameMap {
 
   constructor() {
     this.map = Memory.map;
-  }
-
-  getRooms() {
-    return Object.keys(this.map);
   }
 
   setMap(map) {

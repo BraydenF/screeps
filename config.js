@@ -16,7 +16,7 @@ const config = {
     },
     // moveToOpts: { reusePath: 20, maxOps: 2000, ignoreCreeps: false, visualizePathStyle: { stroke: '#ffffff' } },
     moveToOpts: { reusePath: 15, visualizePathStyle: { stroke: '#ffffff' } },
-    roomsToAvoid: ['W9N51', 'W8N51', 'W4N51', 'W1N51',  'W1N52', 'W1N54', 'E9N51', 'E9N54', 'E6N52', 'E7N52', 'E7N53', 'E9N58', 'E14N41', 'E15N41', 'W3N53'], // , 'W8N54'
+    roomsToAvoid: ['W9N51', 'W8N51', 'W4N51', 'W1N51',  'W1N52', 'W1N54', 'E9N51', 'E9N54', 'E6N52', 'E7N52', 'E7N53', 'E9N58', 'E14N41', 'E15N41', 'W3N53', 'W9N52'], // , 'W8N54'
     rooms: {
         W8N53: {
             nickname: null,
@@ -38,6 +38,10 @@ const config = {
             nickname: null,
             observerRooms: ['E3N50', 'E4N50', 'E5N50', 'E6N50', 'E7N50', 'E8N50', 'E9N50', 'E10N50'],
         },
+        W9N55: {
+            nickname: null,
+            observerRooms: ['W10N54', 'W10N55', 'W10N56', 'W10N57'],
+        },
     }
 };
  
@@ -53,7 +57,7 @@ const config = {
   * 
   * global.Spawn8.createDrone('drone', [WORK,WORK,MOVE,MOVE,CARRY,CARRY,CARRY,MOVE])
   * 
-  * global.Spawn6.createDrone('soldier', [MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK], {targetRoom:'E6N56',target:'5bbcb7a91e7d3f3cbe250913'});
+  * global.Spawn5.createDrone('ranger', [MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,RANGED_ATTACK,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL], {targetRoom:'E6N50',target:'6952b573b3a4d140f926d297'});
   * global.Spawn6.createDrone('soldier', [TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,TOUGH,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE, MOVE,MOVE,MOVE,MOVE,MOVE,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK,ATTACK], {targetRoom:'E6N56',target:'5bbcb7a91e7d3f3cbe250913'});
   * global.Spawn6b.createDrone('healer', [MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,MOVE,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL,HEAL], {targetRoom:'E6N56',target:'5bbcb7a91e7d3f3cbe250913'});
   * 

@@ -1,4 +1,5 @@
 const TaskController = require('TaskController');
+const productionNotifier = require('productionNotifier');
 
 // constants reference
 // LAB_MINERAL_CAPACITY: 3000,
@@ -18,6 +19,20 @@ const TaskController = require('TaskController');
 // Tha lab can support multiple jobs after level 2
 // OH can be crafted and applied as a sub reaction; to use 5 labs only
 const upgradeBoosts = ['XGH2O', 'GH2O', 'GH'];
+
+// 
+/**
+ * the current amount of X indicates the max job request size
+ * If GH2O is available, run the labs
+ * If note, request it. 
+ * 
+ * 
+ * When/where do I make G?
+ * I have enough ZK and UL
+ * When do I make ZK - the Z room requests K
+ * When do I make UL - the L room requests U
+ * - Do I blend these two to make the G?
+ */
 
 class LabController {
 	static startLabFactory(room) {
@@ -57,9 +72,9 @@ class LabController {
 		return this.hive && this.hive.taskController;
 	}
 
-	constructor(room) {
-		this.room = room;
-		this.hive = global.hives[room.roomName];
+	constructor(hive) {
+		this.hive = hive;
+		this.room = hive.room;
 
 		if (typeof this.room.memory['labController'] === 'undefined') this.room.memory['labController'] = { labs: {} };
 		const mem = this.room.memory['labController'];
@@ -143,12 +158,12 @@ class LabController {
 
 	loadLab(lab, resource, amount) {
 		const task = this.taskController.createTransferTask(resource, this.storage, lab);
-  	return this.taskController.issueTask(task, '➕⚗️');
+  		return this.taskController.issueTask(task, '➕⚗️');
 	}
 
 	unloadLab(lab) {
 		const task = this.taskController.createTransferTask(lab.mineralType, lab, this.storage);
-    return this.taskController.issueTask(task, '➖⚗️');
+    	return this.taskController.issueTask(task, '➖⚗️');
 	}
 
 	unloadLabs() {
@@ -290,6 +305,8 @@ class LabController {
 		const amount = mem.fillAmount ? Number(mem.fillAmount) : mem.mode === 'load' ? 50 : 1000;
 		const drone = mem.drone && Game.getObjectById(mem.drone);
 
+		// console.log(lab, mem.resource, amount, drone);
+
 		if (drone && drone.memory.taskQueue && drone.memory.taskQueue.length > 0) {
 			return; // the drone is probably working on my task
 		} else if (drone && drone.memory.task === 'standby') {
@@ -298,10 +315,14 @@ class LabController {
 
 		if (mem.mode === 'load') {
 			const resourceAvailable = this.storage.store.getUsedCapacity(mem.resource) >= LAB_REACTION_AMOUNT;
-			if (!drone && lab.mineralType && lab.mineralType !== mem.resource) {
-				mem.drone = this.unloadLab(lab);
-			} else  if (!drone && resourceAvailable && resourceAmount < amount) {
-				mem.drone = this.loadLab(lab, mem.resource);
+			if (!drone) {
+				if (lab.mineralType && lab.mineralType !== mem.resource) {
+					console.log('unloading', lab, lab.mineralType);
+					mem.drone = this.unloadLab(lab);
+				} else  if (resourceAvailable && resourceAmount < amount) {
+					console.log('loading', lab, mem.resource);
+					mem.drone = this.loadLab(lab, mem.resource);
+				} 
 			} else if (drone && resourceAmount >= amount) {
 				mem.drone = undefined;
 			}
@@ -316,7 +337,7 @@ class LabController {
 		}
 	}
 
-	processTask(lab, { task, resource, lab1: lab1Id, lab2: lab2Id, target: targetCreep, amount }) {
+	processTask(lab, { task, resource, lab1: lab1Id, lab2: lab2Id, target: targetCreep, amount, limit }) {
 		const job = this.get('job');
 		const [resource1, resource2] = LabController.getResourceComponents(resource);
 		const lab1 = lab1Id && Game.getObjectById(lab1Id);
@@ -326,6 +347,12 @@ class LabController {
 			case 'run':
 				const lab1Ready = lab1 && lab1.store.getUsedCapacity(resource1) >= LAB_REACTION_AMOUNT;
 				const lab2Ready = lab2 && lab2.store.getUsedCapacity(resource2) >= LAB_REACTION_AMOUNT;
+
+				// limit
+				if (limit && this.storage.store[resource] >= limit) {
+					console.log('limit skip');
+					break;
+				}
 
 				if (lab.cooldown === OK && lab1Ready && lab2Ready) {
 					const status = lab.runReaction(lab1, lab2);
@@ -340,6 +367,7 @@ class LabController {
 								this.clearReservations([this.lab0.id, this.lab1.id, this.lab2.id]);
 							}
 						}
+						productionNotifier.incrementCounter(resource, LAB_REACTION_AMOUNT);
 					} else if (status === ERR_RCL_NOT_ENOUGH) {
 						if (job) job.status = 'unloading';
 						this.clearReservations([lab.id, lab1Id, lab2Id]);
@@ -425,7 +453,7 @@ class LabController {
 
 			if (lab && mem) {
 				// update to use a manageStore function
-				this.taskController && this.manageStore(lab, mem);
+				if (this.hive.taskController && Game.time % 10 === OK) this.manageStore(lab, mem);
 
 				if (mem.target) {
 					const targetCreep = Game.creeps[mem.target];

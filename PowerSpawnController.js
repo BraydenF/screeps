@@ -6,10 +6,10 @@ class PowerSpawnController {
     return this.hive.taskController;
   }
 
-  constructor(spawn) {
-    this.spawn = spawn;
-    this.room = spawn.room;
-    this.hive = global.hives[this.room.roomName];
+  constructor(hive) {
+    this.hive = hive;
+    this.spawnController = hive.spawnController;
+    this.room = hive.room;
 
     if (this.room.memory.powerSpawn) {
       this.powerSpawn = Game.getObjectById(this.room.memory.powerSpawn.id);
@@ -74,7 +74,7 @@ class PowerSpawnController {
       if (creeps.length > 0) {
         this.manageStore(); // only extra energy
       } else if (this.room.storage.store['power'] > 0) {
-        this.spawn.createDrone('power', [MOVE,CARRY], { powerSpawn: this.get('id') })
+        this.spawnController.createDrone('power', [MOVE,CARRY], { powerSpawn: this.get('id') })
       }
 		}
 	}

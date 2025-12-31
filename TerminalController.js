@@ -34,7 +34,6 @@ class TerminalController {
 		this.terminal = terminal;
 		this.room = this.terminal.room;
 		this.storage = this.room.storage;
-		// this.hive = global.hives[this.room.name];
 		this.marketController = new MarketController(this.room);
 
 		const mem = Memory.rooms[this.room.name].terminal || {};
@@ -102,24 +101,28 @@ class TerminalController {
 	manageStore() {
 		const requestedResources = this.get('requestedResources') || { energy: 10000 };
     const resources = requestedResources && Object.keys(requestedResources);
-
-    let loadTask = [];
-    let unloadTask = [];
+    let tasks = [];
 
     Object.keys(this.terminal.store).forEach(resource => {
-      if (typeof requestedResources[resource] === 'undefined' || this.terminal.store.getUsedCapacity(resource) >= requestedResources[resource] + 1000) {
-        unloadTask = [...unloadTask, ...this.taskController.createTransferTask(resource, this.terminal, this.storage)];
+    	const diff = this.terminal.store.getUsedCapacity(resource) - (requestedResources[resource] || 0);
+      if (diff >= 10000) {
+      	const task = this.taskController.createTransferTask(resource, this.terminal, this.storage);
+      	for (let count = 0; count < 5; count++) {
+        	tasks = [...tasks, ...task];
+      	}
+      } else if (diff >= 1000) {
+      	tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.terminal, this.storage)];
       }
     });
 
     resources.forEach(resource => {
       if (requestedResources[resource] > this.terminal.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
-        loadTask = [...loadTask, ...this.taskController.createTransferTask(resource, this.storage, this.terminal)];
+        tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.storage, this.terminal)];
       }
     });
 
-    if (loadTask.length || unloadTask.length) {
-      this.taskController.issueTask([...loadTask, ...unloadTask]);
+    if (tasks.length) {
+      this.taskController.issueTask(tasks);
     }
 	}
 
@@ -127,10 +130,10 @@ class TerminalController {
   	try {
 	    if (Game.time % 50 === 0) this.manageStore();
 
+	    this.marketController = new MarketController(this.room);
 	    const terminal = this.terminal;
 	    const storage = this.storage;
 	    const transfers = this.get('transfers');
-	    // const requests = this.get('requests');
 	    const requestedResources = this.get('requestedResources') || {};
 
 	    // leaking batteries and reductant
@@ -155,6 +158,9 @@ class TerminalController {
 		          if (requestedResources[resource] >= 0) {
 		          	requestedResources[resource] = undefined;
 			          transfers[resource] = undefined;
+
+		    				this.set('requestedResources', requestedResources);
+		    				this.set('transfers', transfers);
 		          }
 		        }
 		      }
@@ -213,16 +219,18 @@ class TerminalController {
 		    			}
 		    		});
 		    	}
-		    	// console.log('handle-requests', Game.cpu.getUsed() - cpu);
 		    });
-
-		    this.set('transfers', transfers);
-		    this.set('requestedResources', requestedResources);
 		  }
   	} catch (e) {
   		console.log(this.room.name, 'terminal-crash', e.toString());
   		throw (e);
   	}
+  }
+
+  init(terminal) {
+  	this.terminal = terminal;
+		this.room = this.terminal.room;
+		this.storage = this.room.storage;
   }
 
 	run () {

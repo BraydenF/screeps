@@ -1,4 +1,23 @@
+const productionNotifier = require('productionNotifier');
+
 const FACTORY_TARGET_ENERGY = 10000;
+const storeCheckDelay = 500;
+
+const compressions = {
+	K: RESOURCE_KEANIUM_BAR,
+	L: RESOURCE_LEMERGIUM_BAR,
+	U: RESOURCE_UTRIUM_BAR,
+	Z: RESOURCE_ZYNTHIUM_BAR,
+	H: RESOURCE_REDUCTANT,
+	O: RESOURCE_OXIDANT,
+};
+
+const basicCommodities = {
+	mist: 'condensate',
+	biomass: 'cell',
+	metal: 'alloy',
+	silicon: 'wire',
+}
 
 const matMap = {
 	silicon: 'utrium_bar',
@@ -56,7 +75,6 @@ class FactoryController {
 		const batchMap = {};
 		Object.keys(components).forEach(component => {
 			batchMap[component] = Math.floor(this.storage.store.getUsedCapacity(component) / components[component]);
-			// console.log(component, batchMap[component]);
 		});
 		return batchMap;
 	}
@@ -73,46 +91,25 @@ class FactoryController {
 
 		this.setRequestedResources(requestedResources);
 		this.set('job', job);
+		return job;
 	}
 
 	clearJob() {
-		const job = this.get('job');
-		const requestedResources = this.get('requestedResources') || {};
-		requestedResources[job.resource] = undefined;
-
-		const components = FactoryController.getComponents(resource);
-		Object.keys(components).forEach(component => {
-			requestedResources[component] = undefined;
-		});
-
-		this.setRequestedResources(requestedResources);
+		this.setRequestedResources({ energy: 10000 });
 		this.set('job', null);
+		this.set('hasComponents', undefined);
 	}
 
 	getNextJob() {
 		let job;
 
-		// if there is a large amount of basic resources, compress them
-		const compressions = {
-			K: RESOURCE_KEANIUM_BAR,
-			L: RESOURCE_LEMERGIUM_BAR,
-			U: RESOURCE_UTRIUM_BAR,
-			Z: RESOURCE_ZYNTHIUM_BAR,
-			H: RESOURCE_REDUCTANT,
-			O: RESOURCE_OXIDANT,
-		};
-
-		Object.keys(compressions).forEach(resource => {
+		for (const resource in compressions) {
 			const compressedResource = compressions[resource];
-			if (this.storage.store.getUsedCapacity(resource) >= 50000) {
-				job = { resource: compressedResource, amount: 5000 }; // costs 25k mineral
+			if (this.storage.store.getUsedCapacity(resource) >= 50000 || resource === 'O' && this.storage.store.getUsedCapacity(resource) >= 10000) {
+				return this.setJob(compressedResource, 5000);
 			}
-			else if (resource === 'O' && this.storage.store.getUsedCapacity(resource) >= 10000) {
-				job = { resource: compressedResource, amount: 5000 }; // costs 25k mineral
-			}
-		});
+		}
 
-		// if (this.factory.effects)
 		// is there a power creep and are their available OPS
 		if (this.factory.level >= 1) {
 			// If I find any PC instead of just checking the room, I can request the PC if needed.
@@ -125,29 +122,19 @@ class FactoryController {
 					case 1:
 						const t1Resources = ['concentrate', 'switch'];
 						for (const resource of t1Resources) {
-							// console.log('resource',resource);
-							// const components = FactoryController.getComponents(resource);
 							const batchMap = this.getBatchMap(resource);
 							const batches = FactoryController.batchesProducible(batchMap);
 							const maxBatches = Math.ceil(1000 / COMMODITIES[resource].cooldown);
-							console.log(this.room.name, resource, batches, maxBatches);
+
 							if (batches >= maxBatches) {
-								return { resource, amount: COMMODITIES[resource].amount * 24, level: 1 };
+								return this.setJob(resource, COMMODITIES[resource].amount * 24, 1);
 							}
 						}
 				}
 			}
 		}
 
-		// produce basic commodities
-		const basicCommodities = {
-			mist: 'condensate',
-			biomass: 'cell',
-			metal: 'alloy',
-			silicon: 'wire',
-		}
-
-		Object.keys(basicCommodities).forEach(resource => {
+		for (const resource in basicCommodities) {
 			const commodity = basicCommodities[resource];
 			const components = FactoryController.getComponents(commodity);
 			const jobAmount = COMMODITIES[commodity].amount;
@@ -167,8 +154,7 @@ class FactoryController {
 
 				const jobLimit = 10;
 				if (jobBatches >= jobLimit) {
-					// limit the job size!
-					job = { resource: basicCommodities[resource], amount: jobAmount * jobLimit };
+					return this.setJob(basicCommodities[resource], jobAmount * jobLimit);
 				} else {
 					if (mineral && batchMap[mineral] === 0) {
 						// I don't have any bars, can I compress them?
@@ -176,7 +162,7 @@ class FactoryController {
 						const subBatches = FactoryController.batchesProducible(compressionBatchMap);
 
 						if (subBatches > 0) {
-							job = { resource: mineral, amount: subBatches * COMMODITIES[mineral].amount };
+							return this.setJob(mineral, subBatches * COMMODITIES[mineral].amount);
 						} else {
 							// requests resources in increments of 10000
 							const requestAmount = jobAmount * jobBatches <= 10000 ? jobAmount * jobBatches : 10000;
@@ -189,14 +175,12 @@ class FactoryController {
 			} else if (matMap[resource] && this.storage.store[matMap[resource]] > 10000) {
 				this.terminalController.createRequest(resource, 10000);
 			}
-		});
-
-		// compress energy
-		if (this.storage.store.getUsedCapacity(RESOURCE_ENERGY) >= 350000) {
-			job = { resource: RESOURCE_BATTERY, amount: 5000 }; // costs 25k mineral
 		}
 
-		return job;
+		// compress energy
+		if (this.storage.store.getUsedCapacity(RESOURCE_ENERGY) >= 250000) {
+			return this.setJob(RESOURCE_BATTERY, 5000);
+		}
 	}
 
 	setRequestedResources(request = {}) {
@@ -210,99 +194,127 @@ class FactoryController {
 		return this.factory.store.getUsedCapacity(resource);
 	}
 
-	manageStore() {
+	storePreCheck() {
 		const job = this.get('job');
+		const storeOkay = this.get('storeOkay') || 0;
+		const lastManageStore = this.get('lastManageStore') || 0;
+		const lastEventTime = Math.max(lastManageStore, storeOkay);
+		const jobStarted = job ? Game.time - job.startTime <= 100 : false;
+
+		if (storeOkay < lastManageStore || jobStarted || Game.time - lastEventTime >= 500) {
+			const drone = this.taskController.getFreeDrone();
+			return drone;
+		}
+	}
+
+	manageStore() {
+		const drone = this.storePreCheck();
+		if (!drone) return;
+
 		const requestedResources = this.get('requestedResources') || {};
     const resources = requestedResources && Object.keys(requestedResources);
+    let tasks = [];
 
-    let loadTask = [];
-    let unloadTask = [];
-
-    Object.keys(this.factory.store).forEach(resource => {
-    	// console.log(this.room.name, resource, this.factory.store[resource] > requestedResources[resource] + 1000);
-      if (typeof requestedResources[resource] === 'undefined' || (this.factory.store[resource] > requestedResources[resource]) + 1000 && this.room.storage.store.getFreeCapacity(resource) >= 1000) {
-      	// note: consider preventing unloading until there is X if a resource; jobs could have a small requested resources amount
-        unloadTask = [...unloadTask, ...this.taskController.createTransferTask(resource, this.factory, this.storage)];
-        // if (unloadTask.length) this.taskController.issueTask(unloadTask);
-      }
-    });
+    if (this.room.storage.store.getFreeCapacity('energy') >= 5000) {
+	    Object.keys(this.factory.store).forEach(resource => {
+	    	const requestAmount = requestedResources[resource] || 0;
+	    	const requestDelta = requestAmount > 0 ? 1000 : 0;
+	      if (this.factory.store[resource] > (requestAmount + requestDelta)) {
+	        tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.factory, this.storage)];
+	      }
+	    });
+    }
 
     resources.forEach(resource => {
-      if (requestedResources[resource] > this.factory.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
-        loadTask = [...loadTask, ...this.taskController.createTransferTask(resource, this.storage, this.factory)];
-        // console.log(this.room.name, 'load-factory', resource, loadTask);
-        // if (loadTask.length) this.taskController.issueTask(loadTask);
+    	const requestAmount = requestedResources[resource] || 0;
+      if (requestAmount > this.factory.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
+        tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.storage, this.factory)];
       }
     });
 
-    if (loadTask.length || unloadTask.length) {
-      this.taskController.issueTask([...loadTask, ...unloadTask]);
+    if (tasks.length) {
+    	this.set('lastManageStore', Game.time);
+      drone.setTaskQueue(tasks);
+    } else {
+    	this.set('storeOkay', Game.time);
     }
 	}
 
-	produce(resource) {
-		let job = this.get('job');
-		if (!job) return;
-
+	produce() {
+		const job = this.get('job');
 		let requestedResources = this.get('requestedResources') || {};
-   	const components = COMMODITIES[resource].components;
+   	const components = COMMODITIES[job.resource].components;
+   	let hasComponents = this.get('hasComponents');
 
-   	const hasComponents = Object.keys(components).reduce((acc, component) => {
-			return acc && this.getUsedCapacity(component) >= components[component];
-		}, true);
+		if (!hasComponents) {
+	   	hasComponents = Object.keys(components).reduce((acc, component) => {
+				return acc && this.getUsedCapacity(component) >= components[component];
+			}, true);
+			if (hasComponents) this.set('hasComponents', hasComponents);
+		}
 
-// console.log(this.room.name, 'factory', hasComponents, resource, this.factory.produce(resource))
 		if (hasComponents) {
 			job.ready = true;
-			const status = this.factory.produce(resource);
-			// console.log('produce', resource, status);
+			const status = this.factory.produce(job.resource);
 
 			if (status === OK) {
-				job.lastRunTime = Game.time;
-				if (typeof job.amount === 'number') {
-					job.amount = job.amount - COMMODITIES[resource].amount;
-					if (job.amount <= 0) job = null;
-				}
-
-				Object.keys(components).forEach(component => {
-					if (typeof requestedResources[component] === 'number') {
-						requestedResources[component] = requestedResources[component] - components[component];
-					}
-				});
-
+				this.handleJobSuccess(job, requestedResources, components);
+				productionNotifier.incrementCounter(job.resource, COMMODITIES[job.resource].amount);
 			} else if (status === ERR_RCL_NOT_ENOUGH || status === ERR_INVALID_TARGET) {
-				job = null;
+				this.clearJob();
+			} else if (status === ERR_NOT_ENOUGH_RESOURCES) {
+				this.set('hasComponents', false);
 			}
-		} else if (job.lastRunTime && job.lastRunTime + 1000 >= Game.time) {
+		}
+		else if (job.lastRunTime && (job.lastRunTime + 1000 <= Game.time)) {
 			Object.keys(requestedResources).forEach(resource => {
 				if (this.factory.store.getUsedCapacity(resource) + this.storage.store.getUsedCapacity(resource) < requestedResources[resource]) {
-					job = undefined;
-					requestedResources = {};
+					this.clearJob();
 				}
 			});
 		}
+	}
 
-		this.set('job', job);
+	handleJobSuccess(job, requestedResources, components) {
+		job.lastRunTime = Game.time;
+		if (typeof job.amount === 'number') {
+			job.amount = job.amount - COMMODITIES[job.resource].amount;
+			if (job.amount <= 0) job = null;
+		}
+
+		Object.keys(components).forEach(component => {
+			if (typeof requestedResources[component] === 'number') {
+				requestedResources[component] = requestedResources[component] - components[component];
+			}
+		});
+
 		this.setRequestedResources(requestedResources);
+		this.set('job', job);
+	}
+
+	init() {
+		const factoryMem = this.room.memory.factory || {};
+		this.factory = factoryMem.id && Game.getObjectById(factoryMem.id);
+		if (!this.factory) {
+			this.factory = this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_FACTORY } }).onFirst(f => f)
+			this.set('id', this.factory.id);
+		}
+		return factoryMem;
 	}
 
 	run () {
 		try {
-			let job = this.get('job');
+			const mem = this.init();
+			if (Game.time % 5 === OK) this.manageStore();
 
-			// room energy?
-			if (Game.time % 10 === OK) this.manageStore();
-
-			if (!job) {
-				if (Game.time % 100 === OK) job = this.getNextJob();
-				if (!job) return;
-				else this.setJob(job.resource, job.amount, job.level);
+			if (!mem.job) {
+				if (Game.time % 100 === OK) this.getNextJob();
+				return;
 			}
 
 			if (this.factory.cooldown === OK) {
-				this.produce(job.resource);
+				this.produce(mem.job.resource);
 			}
-
 		} catch (e) {
 			console.log(this.room.name,'factory-goof', e.toString());
 		}

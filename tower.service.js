@@ -73,11 +73,12 @@ const towerService = {
   },
   run: function(room, towers) {
     // let cpu = Game.cpu.getUsed();
-    const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
+    // What makes a player hostile?
+    const hostileTargets = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
     if (Game.time % 5 !== OK && hostileTargets.length === 0) return 0;
     else if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
 
-    const repairMultiplier = 1 * room.controller.level * 0.5;
+    const repairMultiplier = room.controller.level <= 3 ? 0.5 : 1 * room.controller.level * 0.5;
     let repairTargets;
     if (hostileTargets.length === OK) {
       repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
@@ -95,7 +96,7 @@ const towerService = {
     if (hostileTargets.length === OK && repairTargets.length === OK) return; // no targets
 
     // let towerEnergy = 0;
-    // room.memory.tEnergy = {};
+    room.memory.tEnergy = {};
     towers.forEach((tower) => {
       if (hostileTargets.length > 0) {
         // if (damagedCreep) {

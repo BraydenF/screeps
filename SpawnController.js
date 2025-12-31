@@ -22,6 +22,18 @@ const m2c2 = [MOVE, MOVE, CARRY, CARRY];
 // - consider how to handle spawn requests instead of a single flag. Allow different systems to post requests, and the spawn can fullfill them individually.
 
 class SpawnController {
+  static getPrimarySpawn(room, spawns) {
+    let primarySpawn = room.memory.primarySpawn && Game.getObjectById(room.memory.primarySpawn);
+    if (!primarySpawn) {
+      // the primary spawn is the one closest to storage
+      primarySpawn = spawns.length <= 1 ? spawns[0] : room.storage.pos.findClosestByRange(FIND_MY_SPAWNS);
+      if (primarySpawn) {
+        room.memory.primarySpawn = primarySpawn.id;
+      }
+    }
+    return primarySpawn;
+  }
+
   get name() {
     return this.spawn && this.spawn.name;
   }
@@ -31,11 +43,10 @@ class SpawnController {
     return this.spawn && this.spawn.spawning;
   }
 
-  constructor(room, spawns) {
-    this.room = room;
-    // the primary spawn is the one closest to storage
-    this.spawn = spawns.length <= 1 ? spawns[0] : room.storage.pos.findClosestByRange(FIND_MY_SPAWNS);
-    this.spawns = spawns;
+  constructor(hive) {
+    this.room = hive.room;
+    this.spawn = hive.spawn;
+    this.spawns = hive.spawns;
 
     this.spawns.forEach(spawn => {
       global[spawn.name] = {
@@ -76,35 +87,35 @@ class SpawnController {
     }
   }
 
-  requestSpawn(key, details)  {
-    const requestedSpawns = this.get('requestedSpawns');
-    if (!requestedSpawns[key]) {
-      requestedSpawns[key] = details;
-    }
-    if (!this.get('toSpawn')) this.set('toSpawn', details);
-  }
+  // requestSpawn(key, details)  {
+  //   const requestedSpawns = this.get('requestedSpawns');
+  //   if (!requestedSpawns[key]) {
+  //     requestedSpawns[key] = details;
+  //   }
+  //   if (!this.get('toSpawn')) this.set('toSpawn', details);
+  // }
 
   canSpawn(cost = null) {
     const energyAvailable = this.room.energyAvailable;
     const hasEnergy = cost ? energyAvailable >= cost : this.room.energyCapacityAvailable - energyAvailable === 0;
-    return !this.spawn.spawning && hasEnergy;
+    return hasEnergy;
   }
 
   spawnCreep() {
-    const requestedSpawns = this.get('requestedSpawns') || {};
+    // const requestedSpawns = this.get('requestedSpawns') || {};
     let toSpawn = this.get('toSpawn');
 
-    if (!toSpawn && Object.keys(requestedSpawns).length > 0) {
-      let priority = 0;
-      toSpawn = Object.keys(requestedSpawns).reduce((acc, key) => {
-        if ((requestedSpawns[key].priority || 0) >= priority) {
-          priority = (requestedSpawns[key].priority || 0);
-          delete requestedSpawns[key].priority;
-          acc = requestedSpawns[key];
-        }
-        return acc;
-      }, null);
-    }
+    // if (!toSpawn && Object.keys(requestedSpawns).length > 0) {
+    //   let priority = 0;
+    //   toSpawn = Object.keys(requestedSpawns).reduce((acc, key) => {
+    //     if ((requestedSpawns[key].priority || 0) >= priority) {
+    //       priority = (requestedSpawns[key].priority || 0);
+    //       delete requestedSpawns[key].priority;
+    //       acc = requestedSpawns[key];
+    //     }
+    //     return acc;
+    //   }, null);
+    // }
 
     const spawn = toSpawn.spawn ? Game.getObjectById(toSpawn.spawn) : this.spawn;
     if (toSpawn && Game.time % 3 === 0 && !spawn.spawning) {
@@ -123,7 +134,6 @@ class SpawnController {
   }
 
   createDrone(job, cost, memory) {
-    // will need to be replaced to something that allows for dynamic spawn selection
     let spawn = this.spawn;
 
     if (spawn.spawning && this.spawns[1] && !this.spawns[1].spawning) {
@@ -148,7 +158,7 @@ class SpawnController {
   }
 
   spawnHauler(energyLimit = 300, memory = {}, instantSpawn) {
-    if (!this.getNextSpawn()) {
+    if (!this.spawn.spawning) {
       let body = [MOVE, MOVE, MOVE, CARRY, CARRY, CARRY];
 
       if (energyLimit >= 2000)      body = [...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2];
@@ -170,7 +180,7 @@ class SpawnController {
   }
 
   spawnUpgrader() {
-    if (!this.getNextSpawn()) {
+    if (!this.spawn.spawning) {
       const cost = this.room.energyCapacityAvailable < 1100 ? this.room.energyCapacityAvailable : 1100;
       let body = [WORK, ...m2c2];
       const sourceIds = Object.keys(this.get('sources') || {});
@@ -183,6 +193,9 @@ class SpawnController {
       else if (cost >= 500) body = [WORK, WORK, WORK, ...m2c2];
       else if (sourceIds && sourceIds.length === 1) body = [...w5, ...m2c2];
 
+      if (this.room.controller.level >= 8 && this.room.storage.store['energy'] >= 200000) {
+        body = [...body, WORK, WORK, MOVE, WORK, WORK, MOVE, MOVE, WORK, WORK, MOVE, MOVE, WORK];
+      }
       return this.createDrone('upgrader', body);
     }
   }
@@ -206,6 +219,10 @@ class SpawnController {
         nearbyCreep.memory.task = 'standby';
       }
     }
+  }
+
+  report () {
+    return this.spawning ? ` - ${this.spawning.name}[${this.spawning.remainingTime}/${this.spawning.needTime}]` : '';
   }
 }
 

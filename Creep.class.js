@@ -2,6 +2,7 @@ const config = require('config');
 const Queue = global.Queue;
 const GameMap = require('GameMap');
 const LabController = require('LabController');
+const productionNotifier = require('productionNotifier');
 
 /**
  * Base unit implementation
@@ -207,12 +208,13 @@ class BaseCreep {
   }
 
   moveTo(target) {
-    if (this.creep.name === 'hauler-73490406-chan') console.log('target', target);
     if (typeof target === 'string') target = Game.getObjectById(target);
-    if (typeof target === 'number') {
+    else if (typeof target === 'number') {
       const exit = this.creep.pos.findClosestByRange(target);
       // { reusePath: 20, maxOps: 2000, ignoreCreeps: false }
       return this.creep.moveTo(exit, config.moveToOpts);
+    } else if (!target) {
+      this.set('target', null);
     }
 
     if (target.pos && this.creep.room.name === target.pos.roomName) {
@@ -240,6 +242,7 @@ class BaseCreep {
   }
 
   moveToRoom(roomName) {
+    // store this route in mem
     const route = GameMap.findRoute(this.creep.room, roomName);
     if (route.length > 0) {
       return this.moveTo(route[0].exit);
@@ -545,13 +548,10 @@ class BaseCreep {
         break;
 
       case OK:
-        // const onHarvestStr = this.get('onHarvest');
-        // if (onHarvestStr) {
-          // I am a miner getting energy from an external room
-          // const onHarvestFunc = Function(onHarvestStr);
-          // if (onHarvestFunc) onHarvest();
-        // }
-      default:
+        const resourceType = target.mineralType || target.depositType;
+        if (resourceType) {
+          productionNotifier.incrementCounter(resourceType, this.creep.getActiveBodyparts(WORK));
+        }
         break;
     }
 
@@ -627,7 +627,7 @@ class BaseCreep {
         if (targets && targets[0]) target = targets[0];
       }
     } else if (target && !this.creep.pos.isNearTo(target)) {
-      this.moveTo(target);
+      this.creep.moveTo(target);
       return ERR_NOT_IN_RANGE;
     }
 
@@ -766,7 +766,7 @@ class BaseCreep {
           } else if (!target) {
             // how can I best prevent this search with out adding it to too many ticks
 
-            if (!target && this.creep.room.energyCapacityAvailable - this.creep.room.energyAvailable > 50) {
+            if (!target && this.creep.room.energyCapacityAvailable - this.creep.room.energyAvailable > 0) {
               target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
                 filter: (structure) => (structure.structureType == STRUCTURE_SPAWN && structure.store.getFreeCapacity(RESOURCE_ENERGY) >= 50)
                   || (structure.structureType === STRUCTURE_EXTENSION && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0)
@@ -925,7 +925,7 @@ class BaseCreep {
           break;
 
         case 'claim':
-          status = this.claim(this.get('targetRoom'));
+          status = this.claim(this.get('targetRoom') || this.creep.room.name);
           break;
 
         case 'flag':
