@@ -97,17 +97,9 @@ class Drone extends BaseCreep {
       throw new Error('Must supply a creep');
     } else if (typeof creep === 'string') {
       creep = Game.creeps[creepName];
-      job = creep.memory.job;
     }
 
   	super(creep);
-    const memory = creep.memory || {};
-    const sources = creep.room.find(FIND_SOURCES);
-
-    // pulls old job, new job can be passed to contrucor
-    this.set('job', memory.job ? memory.job : job);
-    // Game.rooms[memory.homeRoom]
-    this.set('homeRoom', memory.homeRoom && Game.rooms[memory.homeRoom] ? memory.homeRoom : this.creep.room.find(FIND_MY_SPAWNS).onFirst(f => f.room.name));
   }
 
   toString() {
@@ -189,7 +181,6 @@ class Drone extends BaseCreep {
   // }
 
   processJob() {
-    this.job = this.get('job');
     const spawn = this.getSpawn();
     const LOG = false;
     const flag = this.getFlag();
@@ -200,6 +191,7 @@ class Drone extends BaseCreep {
     const targetRoom = this.get('targetRoom');
     const travelTime = this.get('travelTime');
     const isStandby = this.isStandby();
+    let target;
 
     // drones 
     // if (targetRoom && this.creep.room.name !== targetRoom) {
@@ -486,16 +478,16 @@ class Drone extends BaseCreep {
                   return a.store.getFreeCapacity('energy') - b.store.getFreeCapacity('energy');
                 });
 
-                const parts = this.parts;
+                // const parts = this.parts;
                 if (haulers.length > 0 && haulers[0].store.getFreeCapacity() !== 0) {
                   this.setTask('unload', haulers[0].id);
                   this.set('resource', this.getFirstResource());
                 }
-                else if (parts.move / parts.total >= 0.4) {
-                  // If I dont have a nearby hauler, am I forced to return to the storage?
-                  this.setTask('unload', this.get('targetStore') || this.getStorage().id);
-                  this.set('resource', this.getFirstResource()); 
-                }
+                // else if (parts.move / parts.total >= 0.4) {
+                //   // If I dont have a nearby hauler, am I forced to return to the storage?
+                //   this.setTask('unload', this.get('targetStore') || this.getStorage().id);
+                //   this.set('resource', this.getFirstResource()); 
+                // }
               }
             } else {
               this.moveToRoom(targetRoom);
@@ -589,6 +581,49 @@ class Drone extends BaseCreep {
         }
         break;
 
+      case 'power-hauler':
+        if (isStandby) {
+          if (this.creep.room.name === targetRoom) {
+            if (this.creep.memory.powerBank) {
+              const bank = Game.getObjectById(this.creep.memory.powerBank);
+              if (bank) {
+                if (!this.creep.pos.inRangeTo(bank, 5)) {
+                  this.moveTo(bank);
+                }
+                break;
+              } else if (this.getFreeCapacity('power') <= 0) {
+                this.setTask('unload', storage.id);
+                this.set('resource', 'power');
+                break;
+              } else {
+                const droppedResources = this.creep.room.find(FIND_DROPPED_RESOURCES, { filter: { resourceType: 'power' }});
+                if (droppedResources.length > 0) {
+                  this.set('picked-up-power', true);
+                  this.moveTo(droppedResources[0]);
+                  this.setTask('pickup', droppedResources[0].id);
+                  this.set('resource', 'power');
+                  this.setTaskQueue([{ task: 'unload', target: storage.id, resource: 'power' }]);
+                  break;
+                } else if (droppedResources.length === 0) {
+                  if (this.creep.store.getUsedCapacity('power') > 0) {
+                    this.setTask('unload', storage.id);
+                    this.set('resource', 'power'); 
+                  }
+                  break;
+                }
+              }
+            }
+          } else {
+            if (!this.get('picked-up-power')) {
+              this.moveToRoom(targetRoom);
+            } else {
+              this.setTask('reclaim');
+              // Can I become a hauler for a deposit????
+            }
+          }
+        }
+        break;
+
       case 'hauler':
         if (isStandby) {
           if (targetRoom) {
@@ -623,42 +658,15 @@ class Drone extends BaseCreep {
                 }
 
                 const salvage = this.creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-                  filter: tombstone => tombstone.store.getFreeCapacity(RESOURCE_ENERGY) !== tombstone.store.getCapacity(RESOURCE_ENERGY),
+                  filter: tombstone => tombstone.store.getUsedCapacity(source.depositType) > 0,
                 });
                 if (salvage) {
                   this.setTask('load', salvage.id);
-                  this.set('resource', salvage.store[0]);
+                  this.set('resource', source.depositType);
                 }
 
                 if (nearbyCreep && nearbyCreep.store[source.depositType] > 0 && this.getFreeCapacity(RESOURCE_ENERGY) < 0) {
                   nearbyCreep.memory.taskQueue = [{ name: 'unload', target: this.creep.id, resource: source.depositType }];
-                }
-              } else if (this.creep.memory.powerBank) {
-                const bank = Game.getObjectById(this.creep.memory.powerBank);
-                if (bank) {
-                  this.moveTo(bank);
-                  break;
-                } else if (this.getFreeCapacity('power') <= 0) {
-                  this.setTask('unload', storage.id);
-                  this.set('resource', 'power');
-                  break;
-                } else {
-                  const droppedResources = this.creep.room.find(FIND_DROPPED_RESOURCES, { filter: { resourceType: 'power' }});
-                  if (droppedResources.length > 0) {
-                    this.moveTo(droppedResources[0]);
-                    this.setTask('pickup', droppedResources[0].id);
-                    this.set('resource', 'power');
-                    this.setTaskQueue([{ task: 'unload', target: storage.id, resource: 'power' }]);
-                    break;
-                  } else if (droppedResources.length === 0) {
-                    if (this.creep.store.getUsedCapacity('power') > 0) {
-                      this.setTask('unload', storage.id);
-                      this.set('resource', 'power'); 
-                    } else {
-                      this.setTask('reclaim');
-                    }
-                    break;
-                  }
                 }
               }
 
@@ -1023,6 +1031,37 @@ class Drone extends BaseCreep {
         }
         break;
 
+      case 'bankTank':
+        if (isStandby && targetRoom) {
+          if (this.creep.room.name === targetRoom) {
+            if (this.creep.memory.powerBank) {
+              const pb = Game.getObjectById(this.creep.memory.target);
+              if (pb) {
+                if (this.creep.pos.isNearTo(pb)) {
+                  if (!this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: { memory: { job: 'healer', targetRoom } } })) {
+                    break; // wait to attack
+                  }
+                  this.setTask('power-attack', this.creep.memory.target);
+                } else {
+                  this.moveTo(pb);
+                }
+              } else {
+                this.setTask('reclaim');
+              }
+
+            } else if (this.creep.memory.target && this.creep.pos.isNearTo(Game.getObjectById(this.creep.memory.target))) {
+              this.setTask('attack', this.creep.memory.target);
+            } else if (!this.creep.memory.target) {
+              this.setTask('siege');
+            } else if (Game.getObjectById(this.creep.memory.target)) {
+              this.moveTo(this.creep.memory.target);
+            }
+          } else {
+            this.moveToRoom(targetRoom);
+          }
+        }
+        break;
+
       case 'soldier':
         // soldier things.
         // I should have logic for looking at my nearby targets within my actual attack range, and finding targets that are farther out.
@@ -1031,30 +1070,7 @@ class Drone extends BaseCreep {
         if (isStandby) {
           if (targetRoom) {
             if (this.creep.room.name === targetRoom) {
-              // note: I need a better solution to waiting
-              // let supported = !this.creep.memory.supported;
-              // if (this.creep.memory.supported) {
-              //   supported = this.creep.room.find(FIND_MY_CREEPS, { filter: { memory: { job: 'healer', targetRoom } } });
-              // }
-              // if (this.creep.memory.powerBank) {
-                  // 
-              // }
-              if (this.creep.memory.powerBank) {
-                const pb = Game.getObjectById(this.creep.memory.target);
-                if (pb) {
-                  if (this.creep.pos.isNearTo(pb)) {
-                    if (!this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: { memory: { job: 'healer', targetRoom } } })) {
-                      break; // wait to attack
-                    }
-                    this.setTask('attack', this.creep.memory.target);
-                  } else {
-                    this.moveTo(pb);
-                  }
-                } else {
-                  this.setTask('reclaim');
-                }
-
-              } else if (this.creep.memory.target && this.creep.pos.isNearTo(Game.getObjectById(this.creep.memory.target))) {
+              if (this.creep.memory.target && this.creep.pos.isNearTo(Game.getObjectById(this.creep.memory.target))) {
                 this.setTask('attack', this.creep.memory.target);
               } else if (!this.creep.memory.target) {
                 this.setTask('siege');
@@ -1077,7 +1093,6 @@ class Drone extends BaseCreep {
         }
         break;
 
-      case 'bankTank':
       case 'ranger':
         // soldier things.
         // I should have logic for looking at my nearby targets within my actual attack range, and finding targets that are farther out.
@@ -1104,7 +1119,7 @@ class Drone extends BaseCreep {
               if (this.creep.hitsMax - this.creep.hits >= 150) {
                 this.creep.heal(this.creep)
               } else if (this.creep.memory.target) {
-                const target = Game.getObjectById(this.creep.memory.target);
+                target = Game.getObjectById(this.creep.memory.target);
                 if (target) {
                   this.rangedAttack(target);
                 }
@@ -1115,14 +1130,6 @@ class Drone extends BaseCreep {
             }
             break;
           }
-
-          // identify hostiles
-          // const hostileHealer = this.creep.pos.findInRange(FIND_HOSTILE_CREEPS, 3, { filter: (creep) => creep.getActiveBodyparts(HEAL) > 0 });
-          // const closestHostile = this.creep.pos.findClosestByRange(FIND_HOSTILE_CREEPS, {
-          //   filter: (creep) => creep.getActiveBodyparts(ATTACK) > 0 || creep.getActiveBodyparts(RANGED_ATTACK) > 0,
-          // });
-          // const flagbearer = this.creep.pos.findClosestByRange(FIND_HOSTILE_CREEPS, { filter: (creep) => creep.getActiveBodyparts(CLAIM) > 0 });
-          // this.setTask('attack', (hostileHealer || closestHostile) || flagbearer);
         }
         break;
 
@@ -1137,11 +1144,12 @@ class Drone extends BaseCreep {
           }
           else if (targetRoom) {
             if (this.creep.room.name === targetRoom) {
-              const target = this.creep.memory.target
+              target = this.creep.memory.target
                 ? Game.getObjectById(this.creep.memory.target)
                 : this.creep.room.find(FIND_MY_CREEPS).onFirst(f => f);
-              if (this.creep.pos.inRangeTo(target, 5)) {
-                this.setTask('heal');
+              if (target && this.creep.pos.inRangeTo(target, 5)) {
+                this.setTask('triage');
+                this.set('target', null);
               } else {
                 this.moveTo(target);
               }
@@ -1150,6 +1158,7 @@ class Drone extends BaseCreep {
                 this.setTask('reclaim');
               }
             } else {
+              // this.setTask('moveToRoom', targetRoom);
               this.moveToRoom(targetRoom);
             }
             break;
@@ -1277,7 +1286,12 @@ class Drone extends BaseCreep {
       // testing a small cpu cost for checking what job thing to do
       if (this.isStandby()) {
         if (!this.hasTaskQueued() && Game.cpu.bucket > 40) {
-          this.processJob();
+            // const lastCheck = this.get('lastTaskCheck') || 0;
+            // Only check every 3 ticks
+            // if (Game.time - lastCheck >= 3) {
+              this.processJob();
+              // this.set('lastTaskCheck', Game.time);
+            // }
         } else if (this.hasTaskQueued() && Game.cpu.bucket > 20) {
           this.processQueue();
         }
@@ -1290,8 +1304,8 @@ class Drone extends BaseCreep {
       this.set('totalCpu', totalCpu);
       this.set('avgCpu', totalCpu / this.creep.ticksToLive);
     } catch (e) {
-      // console.log(`${this.name} ${this.creep.room.name}`,':', e);
-      // throw e;
+      console.log(`${this.name} ${this.creep.room.name}`,':', e);
+      throw e;
     }
   }
 }

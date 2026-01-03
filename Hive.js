@@ -108,7 +108,8 @@ class Hive {
     });
 
     this.spawn = SpawnController.getPrimarySpawn(this.room, this.spawns);
-    this.spawnController = new SpawnController(this);
+    // this.spawnController = new SpawnController(this);
+    this.spawnController.sync(this);
     this.taskController.refresh(this);
 
     if (this.controller.level >= 7) {
@@ -139,14 +140,14 @@ class Hive {
     return this.spawnController.getSpawn();
   }
 
-  getTowers() {
-    let towers = this.get('towers').map(id => Game.getObjectById(id));
-    if (Game.time % 100 === OK) {
-      towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
-      this.set('towers', towers.map(t => t.id));
-    }
-    return towers;
-  }
+  // getTowers() {
+  //   let towers = this.get('towers').map(id => Game.getObjectById(id));
+  //   if (Game.time % 100 === OK) {
+  //     towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
+  //     this.set('towers', towers.map(t => t.id));
+  //   }
+  //   return towers;
+  // }
 
   getExtractor() {
     let extractor = this.get('extractor') && Game.getObjectById(this.get('extractor'));
@@ -587,36 +588,38 @@ class Hive {
 
   capturePowerBank() {
     const mem = this.get('powerBank');
-    if (mem && mem.expectedDecay < Game.time) {
-      this.set('powerBank', undefined);
+    if (mem && mem.expectedDecay <= Game.time) {
+      return this.set('powerBank', undefined);
     }
-    // if (mem) this.log(`${mem.room}, ${mem.power}, ${mem.expectedDecay > Game.time}`)
-    return;
 
-    if (mem && mem.room && mem.id && mem.expectedDecay > Game.time) {
-      if (mem.hits >= 100000 && Game.time % 10 === OK) {
-        // const soldiers = this.findCreeps(
-        //   c => c.memory.job === 'soldier' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-        // );
-        const bankTank = this.findCreeps(
+    if (mem && mem.room && mem.id) {
+      if (mem.hits >= 200000 && Game.time % 10 === OK) {
+        const healers = this.findCreeps(
+          c => c.memory.job === 'healer' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
+        );
+        const bankTanks = this.findCreeps(
           c => c.memory.job === 'bankTank' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
         );
-        // const healers = this.findCreeps(
-        //   c => c.memory.job === 'healer' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-        // );
 
-        // if (soldiers.length < 2 && soldiers.length <= healers.length) {
-        //   const body = [...m10, ...m10, ...a10, ...a10];
-        //   this.spawnController.createDrone('soldier', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-        // }
-        // if (healers.length < 3 && healers.length < soldiers.length) {
-        //   const body = [...m10, ...m10, ...h10, ...h10, ...m5, ...h5];
-        //   this.spawnController.createDrone('healer', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-        // }
-        if (bankTank.length < 2) {
-          const body = [...m10, ...m10, ...ra10, ...ra10, ...h10];
+        if (healers.length < 4 && healers.length < bankTanks.length) {
+          const body = [...m10, ...m10, ...m5, ...h5, ...h10, ...h10];
+          this.spawnController.createDrone('healer', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
+        }
+        // const soldierLimit = mem.walkablePositions;
+        if (bankTanks.length < 2 && bankTanks.length <= healers.length) {
+          const body = [...m10, ...m10, ...m5, ...a5, ...a10, ...a10];
           this.spawnController.createDrone('bankTank', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
         }
+
+        // if (bankTanks.length >= 1 && healers.length >= 2) {
+        //   const turrets = this.findCreeps(
+        //     c => c.memory.job === 'turrets' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
+        //   );
+        //   if (turrets.length < 2) {
+        //     const body = [...m10, ...m10, ...ra10, ...ra10, ...h10];
+        //     this.spawnController.createDrone('turrets', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
+        //   }
+        // }
         mem.active = true;
       }
 
@@ -626,14 +629,22 @@ class Hive {
         mem.engaged = true;
         mem.hits = powerBank.hits;
 
-        if (powerBank.hits <= 350000) {
+        if (powerBank.hits <= 750000) {
           const haulers = this.findCreeps(
-            c => c.memory.job === 'hauler' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
+            c => c.memory.job === 'power-hauler' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
           );
 
-          if (haulers.length < Math.round(powerBank.power / 1000)) {
-            mem.haulers = haulers.length;
-            this.spawnController.createDrone('hauler', [...m10c10, ...m10c10], { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
+          // todo power-hauler: boosting or first energy assist?
+          const fullHaulerCount = Math.round(powerBank.power / 1000);
+          if (haulers.length < fullHaulerCount) {
+            this.spawnController.createDrone('power-hauler', [...m10c10, ...m10c10], { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
+          }
+          // else if () {
+          //   this.spawnController.createDrone('power-hauler', [...m10c10, ...m10c10], { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
+          // }
+          else {
+            // I think we can assume we are done here.
+            return this.set('powerBank', undefined);
           }
         }
       }
@@ -855,8 +866,9 @@ class Hive {
 
             const minStoredEnergy = 10000;
             const targetDeposit = this.get('mining-deposit');
+            const capturingPower = this.room.memory.powerBank && this.room.memory.powerBank.active;
 
-            if (haveMiners && this.storage.store.getUsedCapacity('energy') >= minStoredEnergy) {
+            if (haveMiners && this.storage.store.getUsedCapacity('energy') >= minStoredEnergy && !capturingPower) {
               if (targetDeposit || this.getEnergyPercentage() > 0.75 && this.storage.store.getUsedCapacity('energy') >= 25000) {
                 this.mineDeposits();
               }
@@ -874,16 +886,15 @@ class Hive {
                 }
               }
 
-              // todo: make power banks a higher priority than a deposit and prevent deposit spawning when engaged for CPU purposes
-              const capturingPower = this.room.memory.powerBank && this.room.memory.powerBank.active;
-              if (capturingPower || (!targetDeposit && (this.getEnergyPercentage() > 0.75 && this.storage.store.getUsedCapacity('energy') >= 100000))) {
+              if (capturingPower || (this.getEnergyPercentage() > 0.75 && this.storage.store.getUsedCapacity('energy') >= 100000)) {
                 this.capturePowerBank();
               }
 
               if (controllerLevel >= 8) {
                 // I can stop scanning when I have something to do!
-                const lfw = !targetDeposit && !capturingPower; // mode === 'standard'???
-                if (lfw && this.storage.store['energy'] > minStoredEnergy) this.observe();
+                if (this.storage.store['energy'] > minStoredEnergy) {
+                  this.observe();
+                }
                 this.powerSpawnController.run();
 
                 // const centralRooms = this.get('extractors');

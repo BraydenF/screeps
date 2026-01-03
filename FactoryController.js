@@ -3,13 +3,24 @@ const productionNotifier = require('productionNotifier');
 const FACTORY_TARGET_ENERGY = 10000;
 const storeCheckDelay = 500;
 
-const compressions = {
+const COMPRESSIONS = {
 	K: RESOURCE_KEANIUM_BAR,
 	L: RESOURCE_LEMERGIUM_BAR,
 	U: RESOURCE_UTRIUM_BAR,
 	Z: RESOURCE_ZYNTHIUM_BAR,
 	H: RESOURCE_REDUCTANT,
 	O: RESOURCE_OXIDANT,
+};
+
+// jost a job config?
+// the minimum should impact the job amount.
+const compressionsConfig = {
+	K: { max: 50000, jobAmount: 3500 },
+	L: { max: 50000, jobAmount: 3500 },
+	U: { max: 50000, jobAmount: 3500 },
+	Z: { max: 50000, jobAmount: 3500 },
+	H: { max: 35000, jobAmount: 2000 },
+	O: { max: 15000, jobAmount: 1000 },
 };
 
 const basicCommodities = {
@@ -62,6 +73,14 @@ class FactoryController {
 		this.room.memory['factory'][key] = value;
 	}
 
+	getConfig(key) {
+		const config = this.get('config') || {};
+		if (key) {
+			return config[key];
+		}
+		return config;
+	}
+
 	getResourceInRoom(resource) {
 		const storageCount = this.storage.store.getUsedCapacity(resource);
 		const factoryCount = this.factory.store.getUsedCapacity(resource);
@@ -101,12 +120,18 @@ class FactoryController {
 	}
 
 	getNextJob() {
-		let job;
+		const compressions = this.getConfig('compressions') || compressionsConfig;
 
 		for (const resource in compressions) {
-			const compressedResource = compressions[resource];
-			if (this.storage.store.getUsedCapacity(resource) >= 50000 || resource === 'O' && this.storage.store.getUsedCapacity(resource) >= 10000) {
-				return this.setJob(compressedResource, 5000);
+			const config = compressions[resource];
+			const compressedResource = COMPRESSIONS[resource];
+
+			// if (config.min) console.log('WOOOO', this.storage.store[resource] <= config.min, this.componentsAvailable(resource, config.min));
+			// if (config.min && this.storage.store[resource] <= config.min) {
+			// 	return this.setJob(resource, config.min); // decompress minerals
+			// } else 
+			if (this.storage.store.getUsedCapacity(resource) >= config.max) {
+				return this.setJob(compressedResource, config.jobAmount); // compress minerals
 			}
 		}
 
@@ -192,6 +217,15 @@ class FactoryController {
 
 	getUsedCapacity(resource = RESOURCE_ENERGY) {
 		return this.factory.store.getUsedCapacity(resource);
+	}
+
+	componentsAvailable(resource, amount = 1) {
+		const components = COMMODITIES[resource].components;
+		// componentsAvailable
+   	return Object.keys(components).reduce((acc, component) => {
+   		// console.log(component, this.storage.store.getUsedCapacity(component), (components[component] * amount));
+			return acc && this.storage.store.getUsedCapacity(component) >= (components[component]);
+		}, true);
 	}
 
 	storePreCheck() {
