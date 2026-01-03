@@ -28,8 +28,7 @@ class BaseCreep {
   }
 
   get taskQueue() {
-    const tasks = this.get('taskQueue');
-    return new Queue(tasks);
+    return this.get('taskQueue') || [];
   }
 
   get task() {
@@ -95,22 +94,17 @@ class BaseCreep {
     if (message) this.creep.say(message);
   }
 
-  getTaskQueue() {
-    const tasks = this.get('taskQueue');
-    return new Queue(tasks);
-  }
-
   setTaskQueue(tasks, message) {
     this.set('taskQueue', tasks);
     if (message) this.creep.say(message);
   }
 
   pushTask(task) {
-    this.taskQueue.enqueue(task);
+    this.taskQueue.push(task);
   }
 
   hasTaskQueued() {
-    return !this.taskQueue.isEmpty;
+    return this.taskQueue.length > 0;
   }
 
   isStandby() {
@@ -208,12 +202,12 @@ class BaseCreep {
   }
 
   moveTo(target) {
+    if (this.creep.fatigue !== OK) {
+      return ERR_TIRED;
+    }
+
     if (typeof target === 'string') target = Game.getObjectById(target);
-    else if (typeof target === 'number') {
-      const exit = this.creep.pos.findClosestByRange(target);
-      // { reusePath: 20, maxOps: 2000, ignoreCreeps: false }
-      return this.creep.moveTo(exit, config.moveToOpts);
-    } else if (!target) {
+    else if (!target) {
       this.set('target', null);
     }
 
@@ -239,14 +233,21 @@ class BaseCreep {
         }
       }
     }
+    return ERR_NO_PATH;
   }
 
   moveToRoom(roomName) {
-    // store this route in mem
-    const route = GameMap.findRoute(this.creep.room, roomName);
-    if (route.length > 0) {
-      return this.moveTo(route[0].exit);
+    if (this.creep.fatigue !== 0) {
+      return ERR_TIRED;
     }
+    const route = GameMap.findRoute(this.creep.room.name, roomName);
+    if (route.length > 0) {
+      const exitPos = this.creep.pos.findClosestByRange(route[0].exit);
+      if (exitPos) {
+        return this.creep.moveTo(exitPos, config.moveToOpts);
+      }
+    }
+    return ERR_NO_PATH;
   }
 
   attack(target) {
@@ -263,7 +264,6 @@ class BaseCreep {
     } if (status === ERR_INVALID_TARGET) {
       this.enterStandby();
     }
-    // console.log('attaack-stat', status);
 
     return status;
   }
@@ -271,10 +271,8 @@ class BaseCreep {
   rangedAttack(target) {
     if (typeof target === 'string') target = Game.getObjectById(target);
 
-    // console.log('rangedattack', target, this.creep.pos.inRangeTo(target, 3));
     if (target && !this.creep.pos.inRangeTo(target, 3)) {
       const status = this.creep.moveTo(target);
-      console.log('asdsad', status)
       return ERR_NOT_IN_RANGE;
     } else if (!target) {
       this.enterStandby();
@@ -699,9 +697,8 @@ class BaseCreep {
 
   processQueue() {
     // task queue
-    const queue = this.getTaskQueue();
-    if (!queue.isEmpty) {
-      const qtask = queue.dequeue();
+    if (!this.taskQueue.isEmpty) {
+      const qtask = this.taskQueue.shift();
       if (typeof qtask === 'object') {
         if (qtask.name) {
           this.setTask(qtask.name);
@@ -724,6 +721,15 @@ class BaseCreep {
 
       // basic task operation
       switch (task) {
+        case 'moveToRoom':
+          if (this.creep.room.name === target) {
+            // find nearest exit && this.creep.move(AWAY_FROM_EXIT)
+            this.enterStandby();
+          } else {
+            this.moveToRoom(targetRoom);
+          }
+          break;
+
         case 'moveTo':
           status = this.moveTo(target);
           if (this.creep.pos.getRangeTo(target) === 0) this.enterStandby();
@@ -881,6 +887,12 @@ class BaseCreep {
           else status = spawn.recycleCreep(this.creep);
           break;
 
+        case'power-attack':
+          if (this.creep.ticksToLive <= 500) {
+            // job change allows the hive to spawn a new tank
+            this.set('job', 'soldier');
+          }
+          if (this.creep.hits < 1000) break;
         case 'attack':
           status = this.attack(this.get('target'));
           break;
@@ -898,18 +910,33 @@ class BaseCreep {
           }
           break;
 
-        case 'heal':
-          const woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: creep => creep.hits < creep.hitsMax })
+        case 'triage':
+          const woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 5, { filter: creep => creep.hits < creep.hitsMax })
             .sort((a, b) => a.hits > b.hits);
-          const woundedCreep = this.creep.pos.findClosestByRange(FIND_MY_CREEPS, { filter: creep => creep.hits < creep.hitsMax });
-          if (woundedCreep) {
-            if (woundedCreeps.length > 0 && this.creep.pos.isNearTo(woundedCreeps[0])) {
+
+          if (woundedCreeps.length > 0) {
+            if (this.creep.pos.isNearTo(woundedCreeps[0])) {
               status = this.creep.heal(woundedCreeps[0]);
-            } else if (this.creep.pos.isNearTo(woundedCreep)) {
-              status = this.creep.heal(woundedCreep);
             } else {
               if (woundedCreeps.length > 0) this.creep.rangedHeal(woundedCreeps[0]);
-              status = this.moveTo(woundedCreep);
+              status = this.moveTo(woundedCreeps[0]);
+            }
+          }
+          break;
+
+        case 'heal':
+          if (!target) {
+            const woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: creep => creep.hits < creep.hitsMax })
+              .sort((a, b) => a.hits > b.hits);
+            target = this.creep.pos.findClosestByRange(FIND_MY_CREEPS, { filter: creep => creep.hits < creep.hitsMax });
+          }
+
+          if (target) {
+            if (this.creep.pos.isNearTo(target)) {
+              status = this.creep.heal(target);
+            } else {
+              status = this.creep.rangedHeal(target);
+              this.moveTo(target);
             }
           } else {
             status = this.enterStandby();

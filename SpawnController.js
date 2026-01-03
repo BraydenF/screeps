@@ -55,6 +55,12 @@ class SpawnController {
     });
   }
 
+  sync(hive) {
+    this.room = hive.room;
+    this.spawn = hive.spawn;
+    this.spawns = hive.spawns;
+  }
+
   get(key) {
     return this.room.memory[key];
   }
@@ -143,18 +149,6 @@ class SpawnController {
     const createDrone = droneService.createDroneFactory(spawn);
     if (typeof cost === 'number') cost = droneService.selectParts(cost);
     return createDrone(job, cost, memory);
-  }
-
-  spawnDrone(cost = 300, memory) {
-    let body = [WORK, MOVE, MOVE, CARRY, CARRY]; // 300
-
-    if (cost >= 1300) body = [...w5, ...m2c2, ...m2c2, ...m2c2, ...m2c2];
-    else if (cost >= 1100) body = [...w5, ...m2c2, ...m2c2, ...m2c2];
-    else if (cost >= 800) body = [WORK, WORK, WORK, WORK, ...m2c2, ...m2c2];
-    else if (cost >= 500) body = [...body, ...body];
-
-    const createDrone = droneService.createDroneFactory(this.spawn);
-    return createDrone('drone', body, memory);
   }
 
   spawnHauler(energyLimit = 300, memory = {}, instantSpawn) {

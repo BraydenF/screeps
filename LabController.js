@@ -322,7 +322,7 @@ class LabController {
 				} else  if (resourceAvailable && resourceAmount < amount) {
 					console.log('loading', lab, mem.resource);
 					mem.drone = this.loadLab(lab, mem.resource);
-				} 
+				}
 			} else if (drone && resourceAmount >= amount) {
 				mem.drone = undefined;
 			}
