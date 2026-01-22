@@ -4,11 +4,11 @@ const productionNotifier = require('productionNotifier');
 
 /**
  * 
- * Game.powerCreeps['Zyphir'].
- * Game.powerCreeps['Zyphir'].spawn(Game.getObjectById('68d5190bc65c030376c56e38'));
- * Game.powerCreeps['Zyphir'].enableRoom(Game.getObjectById('5bbcacbf9099fc012e636211'));
- * Game.powerCreeps['Zyphir'].usePower(PWR_GENERATE_OPS);
- * Game.powerCreeps['Zyphir'].usePower(PWR_OPERATE_FACTORY, Game.getObjectById('6875fa67dcc52ed662e430f0'));
+ * Game.powerCreeps['Hephaestus'].spawn(Game.getObjectById('68d5190bc65c030376c56e38'));
+ * Game.powerCreeps['Hephaestus II'].spawn(Game.getObjectById('68d39ca14f118a576616e843'), { targetRoom: '' });
+ * 
+ * Game.powerCreeps['Hephaestus'].enableRoom(Game.getObjectById('5bbcacbf9099fc012e636211'));
+ * Game.powerCreeps['Hephaestus'].usePower(PWR_OPERATE_FACTORY, Game.getObjectById('6875fa67dcc52ed662e430f0'));
  * 
  */
 
@@ -115,7 +115,7 @@ class PowerCreep {
 
       if (route.length > 0) {
         const exit = this.pc.pos.findClosestByPath(route[0].exit);
-        if (target.pos.roomName === 'E6N56') console.log('route.length', route.length);
+        // if (target.pos.roomName === 'E6N56') console.log('route.length', route.length);
         if (route.length >= 2) {
           return this.pc.moveTo(exit, { reusePath: 15, visualizePathStyle: { stroke: '#ffffff' } });
         } else {
@@ -193,6 +193,15 @@ class PowerCreep {
     return status;
   }
 
+  operateExtension(target) {
+    if (!target) target = this.room.storage;
+    if (this.pc.pos.isNearTo(target)) {
+      this.pc.usePower(PWR_OPERATE_EXTENSION, target);
+    } else {
+      this.pc.moveTo(target);
+    }
+  }
+
   operateFactory(factory) {
   	if (this.pc.pos.isNearTo(factory)) {
   		this.pc.usePower(PWR_OPERATE_FACTORY, factory);
@@ -201,7 +210,15 @@ class PowerCreep {
   	}
   }
 
-  run () {
+  getPower(pwr) {
+    return this.pc.powers[pwr];
+  }
+
+  hasOps(number = 0) {
+    return this.pc.store.getUsedCapacity('ops') >= number;
+  }
+
+  run() {
   	try {
       let target = this.get('target');
       let resource = this.get('resource');
@@ -215,9 +232,10 @@ class PowerCreep {
           break;
 
         case 'load':
-          if (this.load(target, resource, amount) === OK) {
+          const status = this.load(target, resource, amount);
+          if (status === OK || status === ERR_FULL) {
             this.enterStandby();
-          };
+          }
           break;
 
         case 'unload':
@@ -237,7 +255,7 @@ class PowerCreep {
           break;
 
         case 'enablePower':
-          // enable power
+          const controller = this.pc.room.controller;
           if (this.pc.pos.isNearTo(controller)) {
             const status = this.pc.enableRoom(controller);
             if (status === OK) this.enterStandby();
@@ -247,54 +265,76 @@ class PowerCreep {
           break;
 
         default:
-        	// target room behavior is ran by default.
 		      if (this.pc.memory.targetRoom === room.name) {
+            // console.log(this.pc.name);
 		      	const controller = room.controller;
             if (!controller.isPowerEnabled) {
               this.setTask('enablePower');
               break;
             }
 
-            const hasFactoryBoost = this.pc.powers[PWR_OPERATE_FACTORY].cooldown === OK;
-            if (hasFactoryBoost) {
-              if (this.pc.store.getUsedCapacity('ops') < 100 && room.terminal && room.terminal.store.getUsedCapacity('ops') > 0) {
+            const opOps = this.getPower(PWR_GENERATE_OPS);
+            if (opOps && opOps.cooldown === OK && this.pc.store.getFreeCapacity('ops') > 0) {
+              const status = this.pc.usePower(PWR_GENERATE_OPS);
+              if (status === OK) {
+                const opsGenerated = Math.floor(this.pc.powers[PWR_GENERATE_OPS].level / 2) + 1;
+                productionNotifier.incrementCounter('ops', opsGenerated);
+              }
+            }
+
+            const opFactory = this.getPower(PWR_OPERATE_FACTORY);
+            if (opFactory && opFactory.cooldown === OK) {
+              const amountStored = room.terminal ? room.terminal.store.getUsedCapacity('ops') : 0;
+              if (this.pc.store.getUsedCapacity('ops') <= 100 && amountStored > 0) {
                 this.setTask('load', room.terminal.id);
                 this.set('resource', 'ops');
-                this.set('amount', 100 - this.pc.store.getUsedCapacity('ops'));
+                this.set('amount', Math.min([100 - this.pc.store.getUsedCapacity('ops'), amountStored]));
                 break;
               }
 
-              const factory = this.pc.powers[PWR_OPERATE_FACTORY] ? (() => {
+              const factory = opFactory ? (() => {
                 const factoryMem = room.memory.factory;
                 const hasPowerJob = factoryMem.id && factoryMem.job && factoryMem.job.ready;
 
-                if (hasPowerJob && factoryMem.job.level === this.pc.powers[PWR_OPERATE_FACTORY].level) {
+                if (hasPowerJob && factoryMem.job.level === opFactory.level) {
                   return Game.getObjectById(room.memory.factory.id);
                 }
               })() : null;
 
               const factoryNeedsBoost = factory && factory.effects.length === OK;
-              if (factoryNeedsBoost && this.pc.powers[PWR_OPERATE_FACTORY].cooldown === OK) {
-                if (this.pc.store.getUsedCapacity('ops') >= 100) {
-                  this.operateFactory(factory);
-                  break;
+              if (factoryNeedsBoost && this.hasOps(100)) {
+                this.operateFactory(factory);
+                break;
+              }
+            }
+
+            const opExtension = this.getPower(PWR_OPERATE_EXTENSION);
+            if (opExtension && opExtension.cooldown === OK && this.hasOps(2)) {
+              if (room.energyAvailable / room.energyCapacityAvailable < 0.65) {
+                // consider better target selection - container? Can I send it from a Link?
+                if (room.terminal && room.terminal.store['energy'] >= 35000) {
+                  this.operateExtension(room.terminal);
+                } else if (room.storage && room.storage.store['energy'] >= 25000) {
+                  this.operateExtension(room.storage);
                 }
               }
             }
 
-            if (this.pc.store.getUsedCapacity('ops') > 200) {
+            // const opSpawn = this.getPower(PWR_OPERATE_SPAWN);
+            // if (opSpawn && opSpawn.cooldown == OK ) {
+            //   // console.log('opSpawn', opSpawn);
+            //   if (room.memory.mode === 'power') {
+            //     // this.operateSpawn();
+            //   }
+            // }
+
+            if (this.pc.store.getFreeCapacity('ops') < 100) {
               this.setTask('unload', room.terminal.id);
               this.set('resource', 'ops');
               break;
             }
 
-            if (this.pc.powers[PWR_GENERATE_OPS] && this.pc.powers[PWR_GENERATE_OPS].cooldown === OK && this.pc.store.getFreeCapacity('ops') > 0) {
-	      			const status = this.pc.usePower(PWR_GENERATE_OPS);
-              if (status === OK) {
-                const opsGenerated = Math.floor(this.pc.powers[PWR_GENERATE_OPS].level / 2) + 1;
-                productionNotifier.incrementCounter('ops', opsGenerated);
-              }
-	      		} else if (room.memory.powerSpawn && this.pc.ticksToLive < 4000) {
+            if (room.memory.powerSpawn && this.pc.ticksToLive < 4000) {
 	      			const ps = Game.getObjectById(room.memory.powerSpawn.id);
 	      			if (this.pc.pos.isNearTo(ps)) {
 	      				this.pc.renew(ps);
@@ -304,13 +344,15 @@ class PowerCreep {
 	      		} else {
               const ps = Game.getObjectById(room.memory.powerSpawn.id);
               if (!this.pc.pos.isNearTo(ps)) this.pc.moveTo(ps);
-	      			// console.log('nothing')
+	      			// console.log('chilling');
 	      		}
 		      } else {
-            console.log(Game.rooms[this.pc.memory.targetRoom]);
-		      	this.moveTo(Game.rooms[this.pc.memory.targetRoom].controller);
+            if (this.pc.memory.targetRoom) {
+              this.moveTo(Game.rooms[this.pc.memory.targetRoom].controller);
+            } else {
+              this.set('targetRoom', this.pc.room.name);
+            }
 		      }
-
         	break;
       }
     } catch (e) {

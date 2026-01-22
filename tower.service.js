@@ -2,7 +2,7 @@
 const spawn = Game.spawns['spawn'];
 const MIN_BUCKET = 25;
 const defaultTowerConfig = {
-  min_wall: 21500,
+  minWall: 21500,
 }
 
 // todo: move this note to somewhere it makes a bit more sense
@@ -17,7 +17,6 @@ const defaultTowerConfig = {
 //   maintenance_area: {ax: 0, ay: 0, bx: 49, by: 49},
 //   min_wall: 75000,
 // }
-// 
 
 const towerService = {
   getTowers: function(spawn) {
@@ -71,59 +70,107 @@ const towerService = {
 
     return towerHauler;
   },
+  getRepairTargets: function() {
+    // room.memory.upgradeContainer
+    // room.memory.sources.forEach(mem => mem.container)
+  },
   run: function(room, towers) {
     // let cpu = Game.cpu.getUsed();
+    let mem = room.memory;
+    const config = mem.config || defaultTowerConfig;
+
     // What makes a player hostile?
-    // const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
-    const hostileTargets = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
+    const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
+    // const hostileTargets = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
     if (Game.time % 5 !== OK && hostileTargets.length === 0) return 0;
     else if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
-
-    const repairMultiplier = room.controller.level <= 3 ? 0.5 : 1 * room.controller.level * 0.5;
+    
     let repairTargets;
+    let minWallHealth = Infinity;
     if (hostileTargets.length === OK) {
+      // todo: repair targets for the tower need to be handled out of memory. 
+      // I can avoid checking structures that dont decay if an enemy hasn't been in the room
+      // I only need to be told which wall or rampart is being sieged..
+      // Scan just the roads, ramparts, containers.
+      // I could potentially check roads or containers less often?
       repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
         const criticallyLow = ((struct.hits / struct.hitsMax) <= 0.5) && (struct.hits <= 20000);
         const minimumDamage = (struct.hitsMax - struct.hits) >= 1000; // max heal is 800
         const containers = struct.structureType === STRUCTURE_CONTAINER && struct.hits < 150000;
-        const walls = struct.structureType === STRUCTURE_WALL && struct.hits < (defaultTowerConfig.min_wall * repairMultiplier);
-        const ramparts = struct.structureType === STRUCTURE_RAMPART && struct.hits <= defaultTowerConfig.min_wall * repairMultiplier;
         const tunnels = struct.structureType === STRUCTURE_ROAD && struct.hits > 5000 && struct.hits < 500000;
+        if (struct.structureType === STRUCTURE_WALL || struct.structureType === STRUCTURE_RAMPART) {
+          if (struct.hits < minWallHealth) {
+            minWallHealth = struct.hits;
+          }
+          return struct.hits < config.minWall;
+        }
+        // const walls = struct.structureType === STRUCTURE_WALL && struct.hits < config.minWall;
+        // const ramparts = struct.structureType === STRUCTURE_RAMPART && struct.hits <= config.minWall;
 
-        return criticallyLow || (minimumDamage && (containers || walls || ramparts || tunnels));
+        return criticallyLow || (minimumDamage && (containers || tunnels));
       }});
+
+      if (mem.encounter && mem.encounter.lastInteraction + 50 <= Game.time) {
+        if (!mem.encounterHistory) mem.encounterHistory = [];
+        mem.encounterHistory.push({ ...mem.encounter, length: mem.encounter.lastInteraction - mem.encounter.startTime });
+        mem.encounter = null;
+      }
+
+      if (repairTargets.length === OK) {
+        if (minWallHealth >= config.minWall && minWallHealth < 12000000) {
+          config.minWall = minWallHealth;
+        }
+
+        if (mem.mode === 'reinforcing') {
+          // config.minWall = config.minWall + 250;
+          // mem.config = config;
+        } else if (config.reinforcing && room.storage.store['energy'] >= 135000) {
+          config.minWall = config.minWall + 250;
+          mem.config = config;
+          return; // no targets
+        }
+      }
+    } else {
+      if (mem.encounter) {
+        mem.encounter.lastInteraction = Game.time;
+        if (hostileTargets.length > mem.enounter.count) {
+          mem.enounter.count = hostileTargets.length;
+        }
+      } else if (hostileTargets[0].owner.username !== 'Invader') {
+        // starts an ancounter when players are spotted in the room
+        mem.encounter = {
+          owner: hostileTargets[0].owner.username,
+          count: hostileTargets.length,
+          startTime: Game.time,
+          lastInteraction: Game.time,
+        };
+      }
     }
 
-    if (hostileTargets.length === OK && repairTargets.length === OK) return; // no targets
+    const totalEnergyCapacity = towers.length * 1000;
+    let totalEnergy = 0;
+    mem.tEnergy = {};
 
-    // let towerEnergy = 0;
-    room.memory.tEnergy = {};
     towers.forEach((tower) => {
+      totalEnergy = totalEnergy + tower.store['energy'];
       if (hostileTargets.length > 0) {
         // if (damagedCreep) {
         //   tower.heal(damagedCreep);
         // } else {
-          const status = tower.attack(hostileTargets[0]);
-        // }
+        const status = tower.attack(hostileTargets[0]);
       } else if (tower.store.getUsedCapacity(RESOURCE_ENERGY) >= 200 && repairTargets.length > 0) {
-        const target = tower.pos.findClosestByRange(repairTargets)
+        const target = tower.pos.findClosestByRange(repairTargets);
         if (target) tower.repair(target);
       }
 
-      // towerEnergy = towerEnergy + tower.store.getUsedCapacity('energy');
-      if (tower.store.getUsedCapacity('energy') <= 400) {
-        room.memory.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
+      const minEnergy = hostileTargets.length > 0 ? 700 : 400;
+      if (tower.store.getUsedCapacity('energy') <= minEnergy) {
+        mem.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
       }
     });
+
     // console.log('t-cpu', Game.cpu.getUsed() - cpu);
-
-    // const totalTowerEnergy = towers.length * 1000;
-    // console.log('towerEnergy', towerEnergy, totalTowerEnergy, towerEnergy / totalTowerEnergy);
-    // if (room.controller.level >= 7 && towerEnergy < 1000) {
-    //   console.log('additional', 'tHauler', towerEnergy);
-    // }
-
-    // return towerEnergy;
+    room.memory = mem;
   }
 }
 
