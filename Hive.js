@@ -34,6 +34,11 @@ const m2c2 = [MOVE, MOVE, CARRY, CARRY];
 const m5c5 = [...m5, ...c5]; // 250 capacity
 const m10c10 = [...c5, ...m5, ...c5, ...m5]; // 500 capacity
 
+const creepHasAged = (name) => {
+  const hauler = Game.creeps[name];
+  return hauler.ticksToLive <= 1200
+}
+
 class Hive {
   static getCreeps(spawn) {
     const creeps = [];
@@ -70,15 +75,19 @@ class Hive {
     return this.room.terminal;
   }
 
-  get towers() {
-    let towers = global[`${this.roomName}-towers`];
-    if (!towers || Game.time % 100 === OK) {
-      towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
-      global[`${this.roomName}-towers`] = towers;
-      this.set('towers', towers.map(t => t.id));
-    }
-    return towers;
+  get global () {
+    return global.rooms[this.roomName];
   }
+
+  // get towers() {
+  //   let towers = global[`${this.roomName}-towers`];
+  //   if (!towers || Game.time % 100 === OK) {
+  //     towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
+  //     global[`${this.roomName}-towers`] = towers;
+  //     this.set('towers', towers.map(t => t.id));
+  //   }
+  //   return towers;
+  // }
 
   constructor(roomName) {
     this.roomName = roomName;
@@ -97,6 +106,7 @@ class Hive {
   }
 
   init() {
+    const roomObj = {};
     this.creeps = {};
     const key = `${this.roomName}-creeps`;
     global[key] && Object.keys(global[key]).forEach(name => {
@@ -108,13 +118,30 @@ class Hive {
     });
 
     this.spawn = SpawnController.getPrimarySpawn(this.room, this.spawns);
-    // this.spawnController = new SpawnController(this);
     this.spawnController.sync(this);
     this.taskController.refresh(this);
+    roomObj.taskController = this.taskController;
+
+    roomObj.towers = [];
+    (this.get('towers') || []).forEach(tId => {
+      const tower = Game.getObjectById(tId);
+      if (tower) roomObj.towers.push(tower);
+    });
+    if (!roomObj.towers || Game.time % 999 === OK) {
+      roomObj.towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
+      this.set('towers', roomObj.towers.map(t => t.id));
+    }
+
+    roomObj.extensions = (this.get('extensions') || []).map(tId => Game.getObjectById(tId));
+    if (!roomObj.extensions || Game.time % 998 === OK) {
+      roomObj.extensions = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_EXTENSION } });
+      this.set('extensions', extensions.map(e => e.id));
+    }
 
     if (this.controller.level >= 7) {
       const factoryMem = this.room.memory.factory || {};
       this.factory = factoryMem.id ? Game.getObjectById(factoryMem.id) : this.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_FACTORY } }).onFirst(f => f);
+      roomObj.factory = this.factory;
       if (!this.factoryController && this.factory) this.factoryController = new FactoryController(this.factory);
     }
 
@@ -125,6 +152,8 @@ class Hive {
         this.terminalController = new TerminalController(this.room.terminal);
       }
     }
+
+    global.rooms[this.roomName] = roomObj;
   }
 
   get(key) {
@@ -139,15 +168,6 @@ class Hive {
     // todo: update to use the controller to get the desired spawn.
     return this.spawnController.getSpawn();
   }
-
-  // getTowers() {
-  //   let towers = this.get('towers').map(id => Game.getObjectById(id));
-  //   if (Game.time % 100 === OK) {
-  //     towers = this.room.find(FIND_MY_STRUCTURES, { filter: { structureType: STRUCTURE_TOWER } });
-  //     this.set('towers', towers.map(t => t.id));
-  //   }
-  //   return towers;
-  // }
 
   getExtractor() {
     let extractor = this.get('extractor') && Game.getObjectById(this.get('extractor'));
@@ -189,6 +209,18 @@ class Hive {
     }
 
     return status
+  }
+
+  resourceAmount(resource) {
+    let total = 0;
+    if (this.storage) {
+      total = total + this.storage.store[resource];  
+    }
+
+    if (this.terminal) {
+      total = total + this.terminal.store[resource];  
+    }
+    return total;
   }
 
   findCreeps(filterFunc) {
@@ -356,78 +388,109 @@ class Hive {
   }
 
   manageExternalSources() {
-    const externalSources = this.get('externalSources') || {};
-
+    const externalSources = this.get('externalSources') || {}
     externalSources && Object.keys(externalSources).map(roomName => {
-      let { sources, level, stats, disabled } = externalSources[roomName];
+      let { sources, level, stats, disabled, roads } = externalSources[roomName];
       const room = Game.rooms[roomName];
       if (disabled) return;
 
-      // 
       if (room && level && level >= 3) {
         const reservation = room && room.controller.reservation;
         const invaders = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
-        const invaderCores = room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_INVADER_CORE } });
+        if (invaders.length > 0) {
+          const gunship = this.findCreeps(c => c && c.memory.job === 'gunship' && c.memory.targetRoom === roomName).onEmpty(() => {
+            let body = this.controller.level >= 7 ? [...m10, ...ra10] : [...m5, ...ra5];
+            this.spawnController.createDrone('gunship', body, { targetRoom: roomName, target: invaders[0].id });
+            // mem.cost = mem.cost ? mem.cost + this.spawnController.getCost(body) : 0;
+          });
+        }
 
-        // defend against invaders
-        if (invaders.length > 0 || invaderCores.length > 0) {
-          this.findCreeps(c => c && c.memory.job === 'soldier' && c.memory.targetRoom === roomName).onEmpty(() => {
+        const invaderCores = room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_INVADER_CORE } });
+        if (invaderCores.length > 0) {
+          const soldiers = this.findCreeps(c => c && c.memory.job === 'soldier' && c.memory.targetRoom === roomName).onEmpty(() => {
             const target = invaders.length > 0 ? invaders[0].id : invaderCores[0].id;
-            this.spawnController.createDrone('soldier', [MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK], { targetRoom: roomName, target });
+            let body = this.controller.level >= 7 ? [...m10, ...a10] : [MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK];
+            this.spawnController.createDrone('soldier', body, { targetRoom: roomName, target });
+            // mem.cost = mem.cost ? mem.cost + this.spawnController.getCost(body) : 0;
           });
         }
 
         // manage controller reservation
-        if (!reservation || reservation.ticksToEnd < 3500) {
+        if (!room.controller.owner && (!reservation || reservation.ticksToEnd < 3500)) {
+          // note: if lvl 5 I capture the room and get it to level 2.
           this.findCreeps(c => c && c.memory.job === 'flagbearer' && c.memory.targetRoom === roomName).onEmpty(() => {
             const body = this.room.controller.level >= 7 ? [MOVE, MOVE, MOVE, CLAIM, CLAIM, CLAIM] : [MOVE, CLAIM];
-            this.spawnController.createDrone('flagbearer', body, { targetRoom: roomName });
+            const claim = room.level >= 5 ? roomName : undefined;
+            this.spawnController.createDrone('flagbearer', body, { targetRoom: roomName, claim });
+            // mem.cost = mem.cost ? mem.cost + this.spawnController.getCost(body) : 0;
           });
         }
+
+        // road upkeep
+        // if (!roads) {
+
+        // }
       }
 
       if (sources) {
         externalSources[roomName].sources = sources.map(sourceMem => {
-          if (typeof sourceMem === 'string') sourceMem = { id: sourceMem };
+          if (typeof sourceMem === 'string') sourceMem = { id: sourceMem, cost: 0, collected: 0 };
+          if (sourceMem.disabled) return sourceMem;
+          // if (!sourceMem.cost) {
+          //   sourceMem.cost = 0;
+          //   sourceMem.collected = 0;
+          // }
 
           if (level && level >= 3) {
             let keeper = sourceMem.keeper && Game.creeps[sourceMem.keeper];
             if (!keeper) keeper = this.getCreepWithSource('keeper', sourceMem.id);
             if (!Game.creeps[sourceMem.keeper] && keeper) sourceMem.keeper = keeper.name;
-
-            if (!keeper || keeper.ticksToLive < 25) {
-              let body = [...w5, MOVE, WORK, ...m5, CARRY, CARRY, CARRY, CARRY]; // cost 1050
-              this.spawnController.setNextSpawn({ job: 'keeper', body: body, memory: { targetRoom: roomName, source: sourceMem.id } });
-            }
-
-            const container = sourceMem.container ? Game.getObjectById(sourceMem.container) : (() => {
+            const container = room && sourceMem.container && Game.getObjectById(sourceMem.container) ? Game.getObjectById(sourceMem.container) : (() => {
               const source = Game.getObjectById(sourceMem.id);
-              const container = source.pos.findInRange(FIND_STRUCTURES, 2, { filter: { structureType: STRUCTURE_CONTAINER }}).onFirst(s => s);
+              const container = source && source.pos.findInRange(FIND_STRUCTURES, 2, { filter: { structureType: STRUCTURE_CONTAINER }}).onFirst(s => s);
               if (container) sourceMem.container = container.id;
               return container;
             })();
 
-            if (container) {
-              const haulers = Object.keys(this.creeps).filter(id => {
-                const mem = this.creeps[id] && this.creeps[id].memory;
-                if (mem && mem.job === 'hauler' && mem.targetRoom === roomName && mem.source === sourceMem.id) {
-                  return this.creeps[id];
-                }
-              });
+            const allowed = !container || (container && container.store.getFreeCapacity('energy') >= 0)
+            if (allowed && (!keeper || keeper.ticksToLive < 25)) {
+              let body = [...w5, MOVE, WORK, ...m5, CARRY, CARRY, CARRY, CARRY]; // cost 1050
+              this.spawnController.setNextSpawn({ job: 'keeper', body: body, memory: { targetRoom: roomName, source: sourceMem.id } });
+            }
 
-              if (!haulers || haulers.length < 1) {
-                let body = [...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2, ...m2c2];
-                this.spawnController.setNextSpawn({ job: 'hauler', body, memory: { targetRoom: roomName, source: sourceMem.id, container: container.id } });
-              }
-            } else {
-              // construct the container!
-              const source = Game.getObjectById(sourceMem.id);
-              if (source) {
-                // todo: the room memory could be updated by the hive here to avoid the search.
-                const cSite = source.pos.findClosestByRange(FIND_CONSTRUCTION_SITES, { filter: { structureType: STRUCTURE_CONTAINER } });
-                if (!cSite) {
-                  const ret = PathFinder.search(source.pos, this.room.storage.pos, { maxRooms: 1 });
-                  room.createConstructionSite(ret.path[0], STRUCTURE_CONTAINER); // ret.path[0]
+            if (room) {
+              const container = sourceMem.container && Game.getObjectById(sourceMem.container) ? Game.getObjectById(sourceMem.container) : (() => {
+                const source = Game.getObjectById(sourceMem.id);
+                const container = source && source.pos.findInRange(FIND_STRUCTURES, 2, { filter: { structureType: STRUCTURE_CONTAINER }}).onFirst(s => s);
+                if (container) sourceMem.container = container.id;
+                return container;
+              })();
+
+              if (container) {
+                const haulers = Object.keys(this.creeps).filter(id => {
+                  const mem = this.creeps[id] && this.creeps[id].memory;
+                  if (mem && mem.job === 'hauler' && mem.targetRoom === roomName && mem.source === sourceMem.id) {
+                    return this.creeps[id];
+                  }
+                });
+
+                if (!haulers || haulers.length < 1) {
+                  let body = this.controller.level >= 7 ? [...m10c10, ...m2c2, ...m2c2, ...m2c2,] : m10c10;
+                  this.spawnController.setNextSpawn({ job: 'hauler', body, memory: { targetRoom: roomName, source: sourceMem.id, container: container.id } });
+
+                  // store cost of the haulers being created
+                  // sourceMem.cost = sourceMem.cost + this.spawnController.getCost(body);
+                }
+              } else {
+                // construct the container!
+                const source = Game.getObjectById(sourceMem.id);
+                if (source) {
+                  // todo: the room memory could be updated by the hive here to avoid the search.
+                  const cSite = source.pos.findClosestByRange(FIND_CONSTRUCTION_SITES, { filter: { structureType: STRUCTURE_CONTAINER } });
+                  if (!cSite) {
+                    const ret = PathFinder.search(source.pos, this.room.storage.pos, { maxRooms: 1 });
+                    room.createConstructionSite(ret.path[0], STRUCTURE_CONTAINER); // ret.path[0]
+                  }
                 }
               }
             }
@@ -542,10 +605,13 @@ class Hive {
 
         if (Game.time % 50 === OK) {
           const deposit = Game.getObjectById(depositId);
-          if (deposit && deposit.pos.findInRange(FIND_HOSTILE_CREEPS, 2).length >= 2) {
-            depositMem.contested = true;
-            depositMem.disabled = true;
-            mining = null;
+          if (deposit) {
+            depositMem.lastCooldown = deposit.lastCooldown;
+            if (deposit.pos.findInRange(FIND_HOSTILE_CREEPS, 2).length >= 2) {
+              depositMem.contested = Game.time;
+              depositMem.disabled = true;
+              mining = null; 
+            }
           }
 
           const haulers = Object.keys(this.creeps).filter(id => {
@@ -556,23 +622,38 @@ class Hive {
           });
 
           // spawn is stagered by 300 ticks
-          if (haulers.length === 0 || (haulers.length === 1 && haulers[0].ticksToLive <= 1200)) {
+          const desiredHaulerCount = depositMem.lastCooldown <= 35 ? 2 : 1;
+          if (haulers.length < desiredHaulerCount || (haulers.length === 1 && creepHasAged(haulers[0]))) {
             let body = m10c10;
-            if (this.room.controller.level >= 7 && depositMem.lastCooldown <= 30) body = [...m10c10, ...m10c10];
+            if (this.room.controller.level >= 7 && haulers.length === 0 && depositMem.lastCooldown <= 30) body = [...m10c10, ...m10c10];
             this.spawnController.createDrone('hauler', body, { targetRoom: depositMem.room, source: depositId });
           }
 
-          const miner = this.findCreeps(c => c.memory.job === 'miner' && c.memory.source === depositId).onFirst(c => Game.creeps[c]);
-          if (!miner || miner.ticksToLive < 50) {
+          const miner = depositMem.miner && Game.creeps[depositMem.miner] ? Game.creeps[depositMem.miner] : (() => {
+            const creep = this.findCreeps(c => c.memory.job === 'miner' && c.memory.source === depositId).onFirst(c => Game.creeps[c]);
+            if (creep) {
+              depositMem.miner = creep.name;
+              return creep;
+            }
+          })();
+
+          const spawnDelta = miner && miner.memory.travelTime ? miner.memory.travelTime + 50 : 100;
+          if (!miner || miner.ticksToLive < spawnDelta) {
             const w3c2m4 = [WORK, WORK, WORK, MOVE, MOVE, MOVE, MOVE, CARRY, CARRY]; // 600
             let body = [...w10m10, ...m5c5]; // 2000
 
             if (this.controller.level >= 7) {
-              body = [...w10m10, ...w10m10, CARRY, CARRY, CARRY, CARRY]; // 3200
+              if (depositMem.lastCooldown >= 35) {
+                body = [...m5, ...w10m10, ...w10m10, WORK, WORK, WORK, WORK, CARRY];
+              } else {
+                body = [...w10m10, ...w10m10, CARRY, CARRY, CARRY, CARRY]; // 3200
+              }
             }
 
-            // const spawnKey = `${depositMem.room}-${depositId}`;
-            this.spawnController.createDrone('miner', body, { targetRoom: depositMem.room, source: depositId });
+            const res = this.spawnController.createDrone('miner', body, { targetRoom: depositMem.room, source: depositId });
+            if (res.status === OK) {
+              depositMem.miner = res.name;
+            }
           }
           // if (miner && (!depositMem.miner || depositMem.miner !== miner.name)) depositMem.miner = miner.name;
 
@@ -587,70 +668,13 @@ class Hive {
   }
 
   capturePowerBank() {
-    const mem = this.get('powerBank');
+    let mem = this.get('powerBank');
     if (mem && mem.expectedDecay <= Game.time) {
       return this.set('powerBank', undefined);
-    }
-
-    if (mem && mem.room && mem.id) {
-      if (mem.hits >= 200000 && Game.time % 10 === OK) {
-        const healers = this.findCreeps(
-          c => c.memory.job === 'healer' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-        );
-        const bankTanks = this.findCreeps(
-          c => c.memory.job === 'bankTank' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-        );
-
-        if (healers.length < 4 && healers.length < bankTanks.length) {
-          const body = [...m10, ...m10, ...m5, ...h5, ...h10, ...h10];
-          this.spawnController.createDrone('healer', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-        }
-        // const soldierLimit = mem.walkablePositions;
-        if (bankTanks.length < 2 && bankTanks.length <= healers.length) {
-          const body = [...m10, ...m10, ...m5, ...a5, ...a10, ...a10];
-          this.spawnController.createDrone('bankTank', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-        }
-
-        // if (bankTanks.length >= 1 && healers.length >= 2) {
-        //   const turrets = this.findCreeps(
-        //     c => c.memory.job === 'turrets' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-        //   );
-        //   if (turrets.length < 2) {
-        //     const body = [...m10, ...m10, ...ra10, ...ra10, ...h10];
-        //     this.spawnController.createDrone('turrets', body, { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-        //   }
-        // }
-        mem.active = true;
-      }
-
-      // the PB is visible when the assaultis in progress
-      const powerBank = Game.getObjectById(mem.id);
-      if (powerBank) {
-        mem.engaged = true;
-        mem.hits = powerBank.hits;
-
-        if (powerBank.hits <= 750000) {
-          const haulers = this.findCreeps(
-            c => c.memory.job === 'power-hauler' && c.memory.targetRoom === mem.room && c.memory.target === mem.id,
-          );
-
-          // todo power-hauler: boosting or first energy assist?
-          const fullHaulerCount = Math.round(powerBank.power / 1000);
-          if (haulers.length < fullHaulerCount) {
-            this.spawnController.createDrone('power-hauler', [...m10c10, ...m10c10], { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-          }
-          // else if () {
-          //   this.spawnController.createDrone('power-hauler', [...m10c10, ...m10c10], { targetRoom: mem.room, target: mem.id, powerBank: mem.id });
-          // }
-          else {
-            // I think we can assume we are done here.
-            return this.set('powerBank', undefined);
-          }
-        }
-      }
-
+    } else if (mem && mem.room && mem.id) {
+      mem = roomSupport.capturePowerBank(mem, this.spawnController);
       this.set('powerBank', mem);
-    } 
+    }
   }
 
   manageLinks() {
@@ -712,6 +736,21 @@ class Hive {
     }
   }
 
+  monitorStructures() {
+    const structures = this.get('structures');
+    // all, but wall?
+    // walls
+    // repairTargets
+
+    // const walls = this.room.find(FIND_STRUCTURES, { filter: (struct) => {
+    //   return struct.structureType === STRUCTURE_WALL ||  struct.structureType === STRUCTURE_RAMPART;
+    // }});
+    // if (!this.get('walls')) {
+    //   console.log('walls', walls.length);
+    //   // this.set('walls', walls.map(w => w.id))
+    // };
+  }
+
   handleRecovery() {
     if (!this.spawn.spawning) {
       const room = this.room;
@@ -737,51 +776,51 @@ class Hive {
       const creepCount = Object.keys(this.creeps).length;
       if (mode !== 'recovery' && creepCount <= 1) {
         mode = 'recovery';
-        this.set('mode', 'recovery');
       } else if (creepCount >= 2 && mode === 'recovery') {
         mode = 'standard';
-        this.set('mode', 'standard');
       }
 
-      // todo: to save interactions, move to a build-plan
-      let buildCost = 0;
-      const buildTargets = this.room.find(FIND_CONSTRUCTION_SITES);
-      if (buildTargets.length > 0) {
-        mode = 'expanding';
-        this.set('mode', 'expanding');
-        this.set('build-targets', buildTargets.map(t => {
-          buildCost = buildCost + (t.progressTotal - t.progress);
-          return t.id;
-        }));
-        this.set('build-cost', buildCost);
-      } else if (mode === 'expanding' && (buildTargets.length === 0 || !this.storage)) {
-        mode = 'standard';
-        this.set('mode', 'standard');
-        this.set('build-targets', undefined);
-        this.set('build-cost', undefined);
-      }
-
-      // storage monitoring
-      if (this.room.terminal && this.storage) {
-        const rrs = this.terminalController.get('requestedResources') || {};
-        const spaceAvailable = this.storage.store.getFreeCapacity('energy');
-        if (spaceAvailable <= 5000) {
-          // low storage alert - what to do?
-          if (rrs.energy <= 25000) {
-            this.terminalController.setRequestedResources({ ...rrs, energy: 25000 });
+      if (mode !== 'power' && mode !== 'recovery') {
+        if (this.controller.level >= 6) {
+          const hasEnergy = this.storage.store.getUsedCapacity('energy') >= 135000;
+          if (hasEnergy) {
+            mode = 'reinforcing';
+          } else if (mode === 'reinforcing') {
+            mode = 'standard';
           }
         }
-        // else if (spaceAvailable) {
-        //   if (rrs.energy <= 25000) {
 
-        //   }
-        // }
+        // todo: to save interactions, move to a build-plan
+        let buildCost = 0;
+        const buildTargets = this.room.find(FIND_CONSTRUCTION_SITES);
+        if (buildTargets.length > 0) {
+          mode = 'expanding';
+          this.set('build-targets', buildTargets.map(t => {
+            buildCost = buildCost + (t.progressTotal - t.progress);
+            return t.id;
+          }));
+          this.set('build-cost', buildCost);
+        } else if (mode === 'expanding' && (buildTargets.length === 0 || !this.storage)) {
+          mode = 'standard';
+          this.set('build-targets', undefined);
+          this.set('build-cost', undefined);
+        }
       }
+
+      const powerBank = this.get('powerBank');
+      if (powerBank && powerBank.active) {
+        mode = 'power';
+      } else if (mode === 'power') {
+        mode = 'standard';
+      }
+
+      if (mode !== this.get('mode')) this.set('mode', mode);
     }
 
     switch (mode) {
       case 'recovery':
         return this.handleRecovery();
+      case 'reinforcing':
       case 'expanding':
         if (Game.time % 100 === OK) {
           // we have build sites that need attention, spawn some builders!
@@ -790,7 +829,7 @@ class Hive {
 
           if (builders.length < limit && !this.spawnController.spawning) {
             let body = [WORK, WORK, MOVE, CARRY, MOVE, CARRY, MOVE, CARRY, MOVE, CARRY];
-            if (this.room.controller.level >= 7) body = [...body, ...body, WORK];
+            if (this.room.controller.level >= 6) body = [...body, ...body, WORK];
             this.spawnController.createDrone('builder', body);
           }
         }
@@ -798,6 +837,10 @@ class Hive {
       // case 'standard':
       // default:
       //   break;
+      case 'power':
+        // todo: consider creating another creep to assist with power in the hive
+        // if I dont have the power creep in my room that should be assisting.
+        break;
     }
 
     return mode;
@@ -811,7 +854,7 @@ class Hive {
 
       if (this.get('toSpawn')) this.spawnController.spawnCreep();
       const controllerLevel = this.controller.level;
-      if (this.towers.length > 0) towerService.run(this.room, this.towers);
+      if (this.global.towers.length > 0) towerService.run(this.room, this.global.towers);
       let mode = this.handleRoomMode();
 
       const sources = this.manageSources();
@@ -821,15 +864,19 @@ class Hive {
 
       // energy mining operations must be underway
       if (controllerLevel >= 2 && sources) {
+        const capturingPower = this.room.memory.powerBank && this.room.memory.powerBank.active;
+        // this.monitorStructures();
+
         if (haveMiners) {
           this.manageControllerLevel();
 
           // allows a room to mine a source in targetRoom
           // const canSpawn = this.spawnController.getNextSpawn() || !this.spawnController.spawning;
-          // const enabled = controllerLevel !== 8 || (this.room.storage.store.getUsedCapacity('energy') <= 150000);
-          // if (enabled && canSpawn && Game.time % 33 === OK) {
-            // this.manageExternalSources();
-          // }
+          const enabled = controllerLevel !== 8 || (!capturingPower && this.room.storage.store.getUsedCapacity('energy') <= 250000);
+          // do I want to stop gathering energy when I am getting full? I lose control of the room, which isn't ideal. The containers are destroyed. 
+          if (enabled && Game.time % 33 === OK) {
+            this.manageExternalSources();
+          }
         }
 
         if (controllerLevel >= 5) {
@@ -843,7 +890,8 @@ class Hive {
 
             if (haulers.length === 0) {
               const maxCost = this.room.energyCapacityAvailable < 1600 ? this.room.energyCapacityAvailable : 1600;
-              const cost = this.room.energyAvailable < maxCost ? this.room.energyAvailable : maxCost;
+              let cost = this.room.energyAvailable < maxCost ? this.room.energyAvailable : maxCost;
+              if (Object.keys(sources).length <= 1) cost = 1200;
               const res = this.spawnController.spawnHauler(cost, {}, true);
               if (res && res.status === OK) {
                 haulers.push(res.name);
@@ -866,7 +914,6 @@ class Hive {
 
             const minStoredEnergy = 10000;
             const targetDeposit = this.get('mining-deposit');
-            const capturingPower = this.room.memory.powerBank && this.room.memory.powerBank.active;
 
             if (haveMiners && this.storage.store.getUsedCapacity('energy') >= minStoredEnergy && !capturingPower) {
               if (targetDeposit || this.getEnergyPercentage() > 0.75 && this.storage.store.getUsedCapacity('energy') >= 25000) {
@@ -895,7 +942,7 @@ class Hive {
                 if (this.storage.store['energy'] > minStoredEnergy) {
                   this.observe();
                 }
-                this.powerSpawnController.run();
+                this.powerSpawnController.run(this.factoryController);
 
                 // const centralRooms = this.get('extractors');
                 // const flag = Game.flags[`${this.room.name}-deposit`];
@@ -903,20 +950,20 @@ class Hive {
               }
 
               // room support
-              const room = this.get('supporting') && Game.rooms[this.get('supporting')];
-              if (room && this.room.storage.store['energy'] >= 50000) {
-                roomSupport.supportRoom(room, this.spawnController, this.storage.id);
-              }
+              // const room = this.get('supporting') && Game.rooms[this.get('supporting')];
+              // if (room && this.room.storage.store['energy'] >= 50000) {
+              //   roomSupport.supportRoom(room, this.spawnController, this.storage.id);
+              // }
             }
           }
         }
       }
 
-      // const captureFlag = Game.flags[`capture-${this.room.name}`];
-      // if (captureFlag) {
-      //   if (captureFlag.memory && !captureFlag.memory.storage) captureFlag.memory.storage = this.storage.id;
-      //   roomSupport.captureRoom(captureFlag, this.spawnController);
-      // }
+      const captureFlag = Game.flags[`capture-${this.room.name}`];
+      if (captureFlag) {
+        if (captureFlag.memory && !captureFlag.memory.storage) captureFlag.memory.storage = this.storage.id;
+        roomSupport.captureRoom(captureFlag, this.spawnController);
+      }
 
       // end of loop data
       this.set('cpu', Game.cpu.getUsed() - cpu);
