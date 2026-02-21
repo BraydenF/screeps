@@ -40,7 +40,7 @@ module.exports = {
     if (!global.__cpuProfiler || !global.__cpuProfiler.buffer) return;
     Memory.cpuProfile = Memory.cpuProfile || {};
     // For each key, push a new sample (tick and cpu) and keep last N entries
-    for (const key of Object.keys(global.__cpuProfiler.buffer)) {
+    for (const key in global.__cpuProfiler.buffer) {
       const cpu = global.__cpuProfiler.buffer[key];
       Memory.cpuProfile[key] = Memory.cpuProfile[key] || [];
       Memory.cpuProfile[key].push({ t: Game.time, cpu });

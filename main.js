@@ -3,20 +3,49 @@ const utils = require('utils');
 const Hive = require('Hive');
 const Drone = require('Drone.class');
 const GameMap = require('GameMap');
-const MarketController = require('MarketController');
 const PowerCreep = require('PowerCreep');
-const profiler = require('cpuProfiler');
+// const profiler = require('cpuProfiler');
+const roomSupport = require('roomSupport.service');
+const powerBankService = require('powerBank.service');
 const productionNotifier = require('productionNotifier');
+
+const BUCKET_LIMIT = 10000;
 
 global.Hive = Hive;
 global.Drone = Drone;
-global.grc = countResource;
-global.profiler = profiler;
+// global.profiler = profiler;
+
+/**
+ * Spawn7, Spawn3aa; sources:[59bbc4952052a716c3ce8301, 59bbc4952052a716c3ce8303]
+ * Spawn7.createDrone('flagbearer', [MOVE, MOVE, CLAIM], {targetShard:'shard1',targetRoom:'W3N51'})
+ * Spawn7.createDrone('miner', [...m5,...w5], {targetShard:'shard1', targetRoom:'W3N51',source:'59bbc4952052a716c3ce8303'})
+ * Spawn3aa.createDrone('drone', [...m10,...w10, ...m10, ...c10], {targetShard:'shard1', targetRoom:'W3N51'})
+ * Spawn3aa.createDrone('drone', [...m10,...w10, ...m10, ...c10], {source:'59bbc4952052a716c3ce8301',targetShard:'shard1', targetRoom:'W3N51'})
+ */
+
+/**
+ * Notes
+ * - Create a schedule for Hephaestus to move between level 1 factory rooms
+ * - Determine a better way to schedule power banks, strongholds, and excavations
+ * - Create a schedule for stewards to increase power consumption (Current CPU loads indicate I can only have one steward.)
+ * - Update market prices to change over time (increase only?)
+ * - Create better terminal resource management logic tied to 
+ * - Capture the western block Z roomthe mineral
+ * - 
+ *
+ * - Investigate and determine if more drastic CPU saving is needed...
+ * - What can I do to fix CPU at this point?
+ * -- keepers, haulers, and miners occasionally cost .3-.8 for job checks, can this be improved?
+ * -- Do I have any room searches still happening reguarly?
+ * -- 
+ */
 
 global.viewDroneCpu = function(jobName) {
   let totalCpu = 0;
   let count = 0;
   const data = {};
+  let min = Infinity;
+  let max = 0;
 
   for (const name in Memory.creeps) {
     const creep = Memory.creeps[name];
@@ -27,6 +56,8 @@ global.viewDroneCpu = function(jobName) {
 
       if (avgCpu > 0) {
         totalCpu = totalCpu + avgCpu;
+        if (avgCpu < min) min = avgCpu;
+        if (avgCpu > max) max = avgCpu;
         count++;
 
         // if (creep.job) {
@@ -39,163 +70,119 @@ global.viewDroneCpu = function(jobName) {
     }
   }
 
-  console.log(totalCpu, '/', count);
+  console.log(`min:${min.toFixed(2)}, max:${max.toFixed(2)}, total:${totalCpu.toFixed(2)}, count:${count}`);
   return totalCpu / count;
-  // return totalCpu / Memory.creeps.length;
 }
 
-// global.Spawn4.createDrone('drone', [WORK, MOVE, CARRY, WORK, MOVE, CARRY, WORK]);
-
-/**
- * To Do:
- * Hive
- * - Complete the task queue - In Progress
- * - Update the TowerService to use the Taskqueue instead of reserving a hauler
- * 
- * Creeps
- * - Update creeps to correctly move a set amounts of resources
- * 
- * Misc
- * - 
- *
- */
-
-function countResource(resource) {
-  let total = 0;
-  for (const roomName of Object.keys(Game.rooms)) {
+function globalizeHives() {
+  if (!global.hives) global.hives = {};
+  for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
-    if (room && room.controller && room.controller._my && room.storage) {
-      total = total + room.storage.store.getUsedCapacity(resource);
-      if (room.terminal) {
-        total = total + room.terminal.store.getUsedCapacity(resource);
-      }
+    if (!(global.hives[roomName] instanceof Hive) && room.controller && room.controller._my) {
+      global.hives[roomName] = new Hive(roomName);
     }
-  }
-  return total;
+  };
+}
+
+// 
+function operateCreeps() {
+
 }
 
 // main logic loop
 module.exports.loop = function () {
-  // defines the top of the tick for report viewing
-  const reportTime = 10;
-  if (Game.time % reportTime === OK) console.log('*****************************************************************');
+  if (Game.time % 1000 === OK) {
+    // clears old creeps from memory
+    for (const name in Memory.creeps) {
+      const creep = Game.creeps[name];
+      if (typeof creep === 'undefined') {
+        Memory.creeps[name] = undefined;
+      }
+    }
 
-  PowerCreep.run();
-  let droneCpu = Game.cpu.getUsed();
-  Drone.globalizeDrones();
-  if (global.drones && Game.cpu.bucket > 35) {
-    Drone.runDrones(global.drones);
+    // if (Game.shard.name === 'shard0' || Game.shard.name === 'shard2' && Game.cpu.bucket >= 10000) {
+    //   Game.cpu.generatePixel()
+    // }
   }
-  droneCpu = Game.cpu.getUsed() - droneCpu;
 
-  const totalData = { energy: 0, battery: 0 };
   let totalHiveCpu = Game.cpu.getUsed();
+  const lowBucket = Game.cpu.bucket < 4500;
+  const shouldReport = !lowBucket && Game.time % 10 === OK;
 
-  if (global.hives) {
-    for (const roomName of Object.keys(global.hives)) {
+  if (shouldReport) console.log('*****************************************************************');
+  if (global.hives || global.rooms) {
+    for (const roomName in global.hives) {
       const hive = global.hives[roomName];
 
       if (hive instanceof Hive) {
-        const data = hive.run();
-        // profiler.profile(roomName, () => hive.run());
-
-        // if (data) {
-        //   totalData.energy = totalData.energy + data.energy;
-        //   totalData.battery = totalData.battery + data.battery;
-        // }
-
-        if (Game.time % reportTime === OK) hive.report();
+        hive.run();
+        if (shouldReport) hive.report();
       }
     }
-
-    Memory.data = totalData;
   } else {
-    global.hives = {};
+    if (!global.rooms) global.rooms = {};
+    globalizeHives();
   }
+
+  if (shouldReport) console.log('----------------------------------------');
   totalHiveCpu = Game.cpu.getUsed() - totalHiveCpu;
 
-  // some init and cleanup code has been placed behind a CPU wall!
-  if (Game.cpu.getUsed() < 20 && Game.cpu.bucket > 100) {
-    for (const roomName of Object.keys(Game.rooms)) {
-      const room = Game.rooms[roomName];
-      if (!(global.hives[roomName] instanceof Hive) && room.controller && room.controller._my) {
-        global.hives[roomName] = new Hive(roomName);
-      }
-    }
+  // note: temporarilly disabling power banks while CPU issues and power surplus exist.
+  // powerBankService.run();
+  // roomSupport.excavationService.run();
 
-    if (Game.time % 10000 === OK) {
-      // clears old creeps from memory
-      Object.keys(Memory.creeps).forEach(name => {
-        const creep = Game.creeps[name];
-        if (typeof creep === 'undefined') Memory.creeps[name] = undefined;
-      });
-    }
+  // roomSupport.claimLoot();
 
-    // const orderIds = Object.keys(Game.market.orders);
-    // orderIds.forEach(id => {
-    //   const order = Game.market.getOrderById(id);
-    //   if (order && !order.active) {
-    //     Game.market.cancelOrder(order.id);
-    //   }
-    // });
+  let powerCreepCpu = Game.cpu.getUsed();
+  PowerCreep.run();
+  // powerCreepCpu = `power-cpu ${(Game.cpu.getUsed() - powerCreepCpu).toFixed(4)}`;
+  // console.log(powerCreepCpu);
 
-    /**
-     * pathing test work
-     */
-    try {
-      if (false && Game.time % 2 === OK) {
-        const posA = Game.getObjectById('68769493123fb864f956eb85');
-        const posB = Game.getObjectById('5bbcb7a91e7d3f3cbe250913');
-        const flag = Game.flags['deposit-plan'];
-
-        // console.log(posA, flag, flag);      
-        if (posA && flag) {
-          Game.map.visual.line(posA.pos, flag.pos, { color: '#ff0000', lineStyle: 'dashed' });
-          if (Game.map.visual.getSize() >= 1024000) console.log('clearing', Game.map.visual.clear());
-          // console.log('Game.map.visual.getSize()', Game.map.visual.getSize());
-
-          let path = Memory._beta['path-test'];
-          if (!path) {
-            const res = PathFinder.search(posA.pos, { pos: flag.pos }, { plainCost: 1, swampCost: 2 });
-            if (res.path) Memory._beta['path-test'] = res.path;
-          } else {
-            let count = 0;
-            path.forEach(pos => {
-              pos = new RoomPosition(pos.x, pos.y, pos.roomName);
-              if (pos) {
-                if (count <= 5) {
-                  Game.map.visual.text("Target💥", pos, { color: '#FF0000', fontSize: 10 });
-                  // let visual = Game.map.visual.circle(pos, { radius: 10, stroke: '#ff0000' });
-                  // console.log('vis', pos, visual);
-                  count++;
-                }
-              }
-            });
-
-            // console.log(Game.map.visual.export());
-          }
-
-          // PathFinder.search(posA.pos, { pos: flag.pos }, { plainCost: 1, swampCost: 2 }).path.forEach(pos => {
-          //   // console.log(pos);
-          //   if (Game.map.visual.getSize() >= 1024000) {
-          //     // console.log(Game.map.visual.text("💥", pos, { color: '#FF0000', fontSize: 10 }));
-          //   } else console.log('FULL');
-          //   // console.log(Game.map.visual.circle(pos, { fill: 'transparent', radius: 50, stroke: '#ff0000' }));
-
-          // // //   // room.createConstructionSite(pos, STRUCTURE_ROAD);
-          // });
-          // const path = GameMap.findRoute(posA.pos.roomName, flag.pos.roomName);
-          // console.log('path', path);
-        }
-      }
-    } catch (e) {
-      console.log('path-test-oops', e.toString());
-    }
-  }
+  let droneCpu = Game.cpu.getUsed();
+  Drone.runDrones();
+  droneCpu = Game.cpu.getUsed() - droneCpu;
 
   productionNotifier.run()
 
-  const fincpu = Game.cpu.getUsed();
+  // for (const room in Memory.rooms) {
+  //   if (!hasKeys(Memory.rooms[room])) {
+  //     Memory.rooms[room] = undefined;
+  //     // console.log(room, 'empty Memory', Memory.rooms[room].primarySpawn);
+  //   }
+  // }
+
+  // let cpu=Game.cpu.getUsed();JSON.stringify(Memory);console.log(Game.cpu.getUsed()-cpu);
+  // let cpu=Game.cpu.getUsed();let creepCount=Object.keys(Memory.creeps || {}).length;let roomCount=Object.keys(Memory.rooms || {}).length;console.log('Creeps:',creepCount,'Rooms:',roomCount);console.log('CPU delta:',(Game.cpu.getUsed()-cpu).toFixed(3));
+
   // const droneCpuReprt = `drone-cpu ${Game.cpu.getUsed() - droneCpu).toFixed(4)}`;
-  // console.log('hive-cpu', totalHiveCpu.toFixed(4), 'drone-cpu', (droneCpu).toFixed(4), 'cpu', fincpu > 20 ? `<b>${fincpu.toFixed(4)}</b>` : fincpu.toFixed(4), Game.cpu.bucket <= 9900 ? `B:${Game.cpu.bucket}` : '');
+  
+  // if (bucket >= BUCKET_LIMIT) {
+  //   Game.cpu.generatePixel();
+  // }
+  // 
+
+  // if (Game.time % 50) {
+  //   if (Spawn7 && Spawn7.)
+  //   Spawn7.createDrone('sweeper', [...m10c10, ...m10c10], {targetRoom:'W3N53',homeRoom:'W2N53'});
+  // }
+
+  // test code
+  // if (Game.time % 5 && bucket >= 7000) {
+  //   const _routes = Memory._routes;
+  //   for (const key in _routes) {
+  //     if (_routes[key] && Array.isArray(_routes[key])) {
+  //       // console.log('_routes[key]', _routes[key], typeof _routes[key], Array.isArray(_routes[key]));
+  //       for (const path of _routes[key]) {
+  //         if (path.room === 'E10N54') console.log('huh', key, path.room);
+  //       } 
+  //     }
+  //   }
+  // }
+
+  if (Game.cpu.bucket > 2500 && Game.shard.name === 'shard3') {
+    const fincpu = Game.cpu.getUsed();
+    const bucket = Game.cpu.bucket <= 9900 ? ` B:${Game.cpu.bucket}` : '';
+    let cpuReport = 'cpu ' + (fincpu > 20 ? `_${fincpu.toFixed(4)}_` : fincpu.toFixed(4)) + bucket;
+    console.log('hive-cpu', totalHiveCpu.toFixed(4), 'drone-cpu', (droneCpu).toFixed(4), cpuReport);
+  }
 }

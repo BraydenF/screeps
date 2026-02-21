@@ -2,6 +2,7 @@ const productionNotifier = require('productionNotifier');
 
 const FACTORY_TARGET_ENERGY = 10000;
 const storeCheckDelay = 500;
+const BOOST_TIME = 1000;
 
 const COMPRESSIONS = {
 	K: RESOURCE_KEANIUM_BAR,
@@ -10,10 +11,12 @@ const COMPRESSIONS = {
 	Z: RESOURCE_ZYNTHIUM_BAR,
 	H: RESOURCE_REDUCTANT,
 	O: RESOURCE_OXIDANT,
+	X: RESOURCE_PURIFIER,
+	G: RESOURCE_GHODIUM_MELT,
 };
 
-// jost a job config?
 // the minimum should impact the job amount.
+// 10000 -> 2000, 50000 -> 10000
 const compressionsConfig = {
 	K: { max: 50000, jobAmount: 3500 },
 	L: { max: 50000, jobAmount: 3500 },
@@ -21,6 +24,8 @@ const compressionsConfig = {
 	Z: { max: 50000, jobAmount: 3500 },
 	H: { max: 35000, jobAmount: 2000 },
 	O: { max: 15000, jobAmount: 1000 },
+	X: { max: 55000, jobAmount: 2500 },
+	G: { max: 50000, jobAmount: 3500 },
 };
 
 const basicCommodities = {
@@ -30,8 +35,22 @@ const basicCommodities = {
 	silicon: 'wire',
 }
 
-const matMap = {
-	silicon: 'utrium_bar',
+const advancedCommodities = {
+	1: {
+		concentrate: Infinity,
+		switch: Infinity,
+		composite: 3500,
+	},
+	2: {
+		extract: Infinity,
+		transistor: Infinity,
+		crystal: 3000,
+	},
+	3: {
+		spirit: Infinity,
+		microchip: Infinity,
+		liquid: 1000,
+	},
 }
 
 class FactoryController {
@@ -48,7 +67,18 @@ class FactoryController {
 	}
 
 	static batchesProducible(batchMap) {
-		return Math.min(...Object.keys(batchMap).map(resource => batchMap[resource]));
+    let min = Infinity;
+    let found = false;
+
+    for (const resource in batchMap) {
+      const amount = batchMap[resource];
+      if (amount < min) {
+        min = amount;
+      }
+      found = true;
+    }
+
+    return found ? min : 0;
 	}
 
 	constructor(factory) {
@@ -92,10 +122,26 @@ class FactoryController {
 		const jobAmount = COMMODITIES[resource].amount;
 
 		const batchMap = {};
-		Object.keys(components).forEach(component => {
+		for (const component in components) {
 			batchMap[component] = Math.floor(this.storage.store.getUsedCapacity(component) / components[component]);
-		});
+		}
 		return batchMap;
+	}
+
+	isAcceptingJobs() {
+		return !this.get('job');
+	}
+
+	attemptJob(resource) {
+		const batchMap = this.getBatchMap(resource);
+		const batches = FactoryController.batchesProducible(batchMap);
+		const maxBatches = Math.ceil(BOOST_TIME / COMMODITIES[resource].cooldown);
+
+		if (batches >= maxBatches) {
+			this.setJob(resource, maxBatches, this.factory.level);
+			return OK;
+		}
+		return ERR_NOT_ENOUGH_RESOURCES;
 	}
 
 	setJob(resource, amount, level) {
@@ -104,12 +150,20 @@ class FactoryController {
 		const batches = amount / COMMODITIES[resource].amount;
 
 		const components = FactoryController.getComponents(resource);
-		Object.keys(components).forEach(component => {
+		for (const component in components) {
 			requestedResources[component] = batches * components[component];
-		});
+		}
 
 		this.setRequestedResources(requestedResources);
 		this.set('job', job);
+		// update to save memory
+		this.room.memory.factory = {
+			...this.room.memory.factory,
+			hasComponents: undefined,
+			nextManageStore: Game.time,
+			requestedResources,
+			job,
+		}
 		return job;
 	}
 
@@ -130,7 +184,7 @@ class FactoryController {
 			// if (config.min && this.storage.store[resource] <= config.min) {
 			// 	return this.setJob(resource, config.min); // decompress minerals
 			// } else 
-			if (this.storage.store.getUsedCapacity(resource) >= config.max) {
+			if (compressedResource && this.storage.store.getUsedCapacity(resource) >= config.max) {
 				return this.setJob(compressedResource, config.jobAmount); // compress minerals
 			}
 		}
@@ -143,18 +197,11 @@ class FactoryController {
 			}}).onFirst(f => f);
 
 			if (pc && pc.powers[PWR_OPERATE_FACTORY] && pc.powers[PWR_OPERATE_FACTORY].cooldown === OK) {
-				switch (this.factory.level) {
-					case 1:
-						const t1Resources = ['concentrate', 'switch'];
-						for (const resource of t1Resources) {
-							const batchMap = this.getBatchMap(resource);
-							const batches = FactoryController.batchesProducible(batchMap);
-							const maxBatches = Math.ceil(1000 / COMMODITIES[resource].cooldown);
-
-							if (batches >= maxBatches) {
-								return this.setJob(resource, COMMODITIES[resource].amount * 24, 1);
-							}
-						}
+				const jobs = advancedCommodities[this.factory.level];
+				if (jobs) for (const resource in jobs) {
+					if (this.storage.store[resource] <= jobs[resource]) {
+						if (this.attemptJob(resource) === OK) return;
+					}
 				}
 			}
 		}
@@ -167,15 +214,28 @@ class FactoryController {
 			const batchMap = {};
 			let mineral;
 			if (this.getResourceInRoom(resource) >= jobAmount) {
-				const jobBatches = Math.min(...Object.keys(components).map(component => {
-					const resourceAmount = this.getResourceInRoom(component);
-					batchMap[component] = Math.floor(resourceAmount / components[component]);
+				// for (const component in components) {
 
-					if (component !== 'energy' && component !== resource) {
-						mineral = component;
-					}
-					return batchMap[component];
-				}));
+				let jobBatches = Infinity;
+				let found = false;
+
+				for (const component in components) {
+			    const resourceAmount = this.getResourceInRoom(component);
+			    const possibleBatches = Math.floor(resourceAmount / components[component]);
+			    batchMap[component] = possibleBatches;
+
+			    if (possibleBatches < jobBatches) {
+		        jobBatches = possibleBatches;
+			    }
+
+			    if (component !== 'energy' && component !== resource) {
+		        mineral = component;
+			    }
+			    found = true;
+				}
+
+				// Handle the case where components might be empty
+				if (!found) jobBatches = 0;
 
 				const jobLimit = 10;
 				if (jobBatches >= jobLimit) {
@@ -197,9 +257,12 @@ class FactoryController {
 						}
 					}
 				}
-			} else if (matMap[resource] && this.storage.store[matMap[resource]] > 10000) {
-				this.terminalController.createRequest(resource, 10000);
 			}
+			// deprecating as this is not really in use.
+			// const matMap = { silicon: 'utrium_bar' }
+			// else if (matMap[resource] && this.storage.store[matMap[resource]] > 10000) {
+			// 	this.terminalController.createRequest(resource, 10000);
+			// }
 		}
 
 		// compress energy
@@ -220,57 +283,59 @@ class FactoryController {
 	}
 
 	componentsAvailable(resource, amount = 1) {
-		const components = COMMODITIES[resource].components;
-		// componentsAvailable
-   	return Object.keys(components).reduce((acc, component) => {
-   		// console.log(component, this.storage.store.getUsedCapacity(component), (components[component] * amount));
-			return acc && this.storage.store.getUsedCapacity(component) >= (components[component]);
-		}, true);
+    const components = COMMODITIES[resource].components;
+    for (const component in components) {
+      if (this.storage.store.getUsedCapacity(component) < (components[component] * amount)) {
+        return false;
+      }
+    }
+  	return true;
 	}
 
-	storePreCheck() {
-		const job = this.get('job');
-		const storeOkay = this.get('storeOkay') || 0;
-		const lastManageStore = this.get('lastManageStore') || 0;
-		const lastEventTime = Math.max(lastManageStore, storeOkay);
-		const jobStarted = job ? Game.time - job.startTime <= 100 : false;
+	// storePreCheck() {
+	// 	const job = this.get('job');
+	// 	const storeOkay = this.get('storeOkay') || 0;
+	// 	const lastManageStore = this.get('lastManageStore') || 0;
 
-		if (storeOkay < lastManageStore || jobStarted || Game.time - lastEventTime >= 500) {
-			const drone = this.taskController.getFreeDrone();
-			return drone;
-		}
-	}
+	// 	if (storeOkay < lastManageStore) {
+	// 		const drone = this.taskController.getFreeDrone();
+	// 		return drone;
+	// 	}
+	// }
 
 	manageStore() {
-		const drone = this.storePreCheck();
-		if (!drone) return;
+		// what if I just didnt have a drone....
+		const drone = this.taskController.getFreeDrone();
+		if (!drone) {
+      this.set('nextManageStore', Game.time + 13);
+			return;
+		}
 
-		const requestedResources = this.get('requestedResources') || {};
-    const resources = requestedResources && Object.keys(requestedResources);
     let tasks = [];
+		const requestedResources = this.get('requestedResources') || {};
 
     if (this.room.storage.store.getFreeCapacity('energy') >= 5000) {
-	    Object.keys(this.factory.store).forEach(resource => {
+    	for (const resource in this.factory.store) {
 	    	const requestAmount = requestedResources[resource] || 0;
 	    	const requestDelta = requestAmount > 0 ? 1000 : 0;
 	      if (this.factory.store[resource] > (requestAmount + requestDelta)) {
 	        tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.factory, this.storage)];
 	      }
-	    });
+	    }
     }
 
-    resources.forEach(resource => {
+    for (const resource in requestedResources) {
     	const requestAmount = requestedResources[resource] || 0;
       if (requestAmount > this.factory.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
         tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.storage, this.factory)];
       }
-    });
+    }
 
     if (tasks.length) {
-    	this.set('lastManageStore', Game.time);
       drone.setTaskQueue(tasks);
+      this.set('nextManageStore', Game.time + 53);
     } else {
-    	this.set('storeOkay', Game.time);
+    	this.set('nextManageStore', Game.time + 263);
     }
 	}
 
@@ -281,10 +346,18 @@ class FactoryController {
    	let hasComponents = this.get('hasComponents');
 
 		if (!hasComponents) {
-	   	hasComponents = Object.keys(components).reduce((acc, component) => {
-				return acc && this.getUsedCapacity(component) >= components[component];
-			}, true);
-			if (hasComponents) this.set('hasComponents', hasComponents);
+			let allFound = true;
+	    for (const component in components) {
+        if (this.getUsedCapacity(component) < components[component]) {
+          allFound = false;
+          break; // Optimization: Exit the moment ONE requirement isn't met
+        }
+	    }
+
+	    if (allFound) {
+        hasComponents = true;
+        this.set('hasComponents', true);
+	    }
 		}
 
 		if (hasComponents) {
@@ -299,13 +372,12 @@ class FactoryController {
 			} else if (status === ERR_NOT_ENOUGH_RESOURCES) {
 				this.set('hasComponents', false);
 			}
-		}
-		else if (job.lastRunTime && (job.lastRunTime + 1000 <= Game.time)) {
-			Object.keys(requestedResources).forEach(resource => {
+		} else if (Game.time - (job.lastRunTime || job.startTime) >= 1000) {
+			for (const resource in requestedResources) {
 				if (this.factory.store.getUsedCapacity(resource) + this.storage.store.getUsedCapacity(resource) < requestedResources[resource]) {
 					this.clearJob();
 				}
-			});
+			}
 		}
 	}
 
@@ -316,11 +388,11 @@ class FactoryController {
 			if (job.amount <= 0) job = null;
 		}
 
-		Object.keys(components).forEach(component => {
+		for (const component in components) {
 			if (typeof requestedResources[component] === 'number') {
 				requestedResources[component] = requestedResources[component] - components[component];
 			}
-		});
+		}
 
 		this.setRequestedResources(requestedResources);
 		this.set('job', job);
@@ -339,11 +411,18 @@ class FactoryController {
 	run () {
 		try {
 			const mem = this.init();
-			if (Game.time % 5 === OK) this.manageStore();
 
 			if (!mem.job) {
-				if (Game.time % 100 === OK) this.getNextJob();
+				const lastJobCheck = this.get('lastJobCheck') || 0;
+				if (Game.time - lastJobCheck >= 250) {
+					this.set('lastJobCheck', Game.time);
+					this.getNextJob();
+				}
 				return;
+			}
+
+			if ((mem.nextManageStore || 0) <= Game.time) {
+				this.manageStore();
 			}
 
 			if (this.factory.cooldown === OK) {
@@ -351,6 +430,7 @@ class FactoryController {
 			}
 		} catch (e) {
 			console.log(this.room.name,'factory-goof', e.toString());
+			throw e;
 		}
 	}
 

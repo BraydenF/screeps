@@ -1,5 +1,4 @@
 const config = require('config');
-const Queue = global.Queue;
 const GameMap = require('GameMap');
 const LabController = require('LabController');
 const productionNotifier = require('productionNotifier');
@@ -23,6 +22,10 @@ class BaseCreep {
     return this.creep.memory;
   }
 
+  // set memory(mem) {
+  //   Memory.creeps[this.creep.name] = { ...this.creep.memory, ...mem };
+  // }
+
   get creep() {
     return Game.creeps[this.name];
   }
@@ -36,7 +39,6 @@ class BaseCreep {
   }
 
   set task(task) {
-    // this.task = task;
     if (this.memory.task !== task) this.set('task', task);
   }
 
@@ -63,16 +65,21 @@ class BaseCreep {
   }
 
   set amount(amount) {
-    // this.amount = amount;
     if (this.creep.memory.amount !== amount) this.creep.memory.amount = amount;
   }
 
+  get interuptable() {
+    return ['healer'].includes(this.creep.memory.job);
+  }
+
+  get hitPercentage() {
+    return this.creep.hits / this.creep.hitsMax;
+  }
+
 	constructor(creep) {
-    if (!creep) console.log('huh?>>')
     const memory = creep.memory || {};
     this.name = creep.name;
 		// this.creep = creep;
-    this.task = memory.task ? memory.task : 'standby';
   }
 
   get(key) {
@@ -87,16 +94,22 @@ class BaseCreep {
     return this.memory.task === task;
   }
 
-  setTask(task, target = null, message = null) {
-    this.task = task;
+  setTask(task = 'standby', target = null, message = null) {
+    if (typeof task === 'object') {
+      if (task.resource) this.set('resource', task.resource);
+      if (task.amount) this.set('amount', task.amount);
+      if (task.target) target = task.target;
+      task = task.name || task.task || 'standby';
+    }
+
     this.set('task', task);
     if (target) this.setTarget(target);
-    if (message) this.creep.say(message);
+    if (message && Game.cpu.bucket >= 10000) this.creep.say(message);
   }
 
   setTaskQueue(tasks, message) {
     this.set('taskQueue', tasks);
-    if (message) this.creep.say(message);
+    if (message && Game.cpu.bucket >= 10000) this.creep.say(message);
   }
 
   pushTask(task) {
@@ -111,13 +124,15 @@ class BaseCreep {
     return !this.memory.task || this.hasTask('standby');
   }
 
-  enterStandby(message) {
-    if (message) this.creep.say(message);
-    this.setTask('standby');
-    this.set('target', null);
-    this.set('resource', undefined);
-    this.set('amount', undefined);
-    this.set('_move', undefined);
+  enterStandby() {
+    this.creep.memory = {
+      ...this.creep.memory,
+      task: 'standby',
+      target: null,
+      resource: undefined,
+      amount: undefined,
+      _move: undefined,
+    };
   }
 
   getSource() {
@@ -154,6 +169,19 @@ class BaseCreep {
     return this.creep.room.name === this.get('homeRoom');
   }
 
+  getHomeRoom() {
+    return Game.rooms[this.get('homeRoom')];
+  }
+
+  hasResources() {
+    for (const resourceType in this.creep.store) {
+      if (this.creep.store[resourceType] > 0) {
+        return resourceType; 
+      }
+    }
+    return null;
+  }
+
   getFreeCapacity(resource = RESOURCE_ENERGY) {
     return this.creep.store.getFreeCapacity(resource);
   }
@@ -183,71 +211,138 @@ class BaseCreep {
   }
 
   getFirstResource() {
-    const resources = Object.keys(this.creep.store);
-    return resources.length > 0 ? resources[0] : undefined;
+    for (const resource in this.creep.store) {
+      return resource;
+    }
   }
 
-  getHarvestPower() {
-    return this.creep.body.reduce((acc, part) => {
-      if (part.type === WORK) {
-        // if (part.boost) console.log(part.type, part.boost, part.boost && BOOSTS[WORK][part.boost].harvest);
-        if (part.boost && BOOSTS[WORK][part.boost]) {
-          acc = acc + BOOSTS[WORK][part.boost].harvest;
-        } else {
-          acc = acc + HARVEST_POWER;
+  getHarvestPower(resource = 'energy') {
+    let harvestPower = this.get('harvest-power');
+
+    if (!harvestPower) {
+      const basePower = resource === 'energy' ? HARVEST_POWER : HARVEST_MINERAL_POWER;
+      harvestPower = this.creep.body.reduce((acc, part) => {
+        if (part.type === WORK) {
+          if (part.boost && BOOSTS[WORK][part.boost]) {
+            acc = acc + BOOSTS[WORK][part.boost].harvest;
+          } else {
+            acc = acc + basePower;
+          }
         }
-      }
-      return acc;
-    }, 0);
-  }
-
-  moveTo(target) {
-    if (this.creep.fatigue !== OK) {
-      return ERR_TIRED;
+        return acc;
+      }, 0);
+      this.set('harvest-power', harvestPower);
     }
 
-    if (typeof target === 'string') target = Game.getObjectById(target);
-    else if (!target) {
+    return harvestPower;
+  }
+
+  storeTravelerMemory() {
+    const data = InterShardMemory.getLocal();
+    let travelers = data ? JSON.parse(data) : {};
+    travelers[this.creep.name] = { ...this.creep.memory, homeShard: Game.shard.name };
+    InterShardMemory.setLocal(JSON.stringify(travelers));
+  };
+
+  usePortal(portal) {
+    // if (!this.get('homeShard')) this.set('homeShard', Game.shard.name);
+    this.storeTravelerMemory();
+    this.setTask('moveTo');
+    this.setTarget(portal);
+  }
+
+  moveTo(target, options = {}) {
+    if (this.creep.fatigue > 0) return ERR_TIRED;
+
+    let targetPos;
+    if (target instanceof RoomPosition) {
+      targetPos = target;
+    } else if (typeof target === 'string') {
+      const obj = Game.getObjectById(target);
+      targetPos = obj ? obj.pos : null;
+    } else if (target && target.pos) {
+      targetPos = target.pos;
+    } else if (target && target.roomName && target.x && target.y) {
+      targetPos = new RoomPosition(target.x, target.y, target.roomName);
+    }
+
+    if (!targetPos) {
       this.set('target', null);
+      return ERR_INVALID_TARGET;
     }
 
-    if (target.pos && this.creep.room.name === target.pos.roomName) {
-      if (this.creep.fatigue === OK) {
-        // console.log('moveTo', target);
-        return this.creep.moveTo(target, config.moveToOpts);
-      }
-      // else {
-      //   Game.map.visual.line(this.creep.pos, target.pos, { width: 0.3 });
-      //   return ERR_TIRED;
-      // }
+    if (this.creep.room.name === targetPos.roomName) {
+      return this.creep.moveTo(targetPos, { ...config.moveToOpts, ...options });
     } else {
-      const route = GameMap.findRoute(this.creep.room.name, target && (target.roomName || target.pos.roomName));
-
-      if (route.length > 0) {
-        const exit = this.creep.pos.findClosestByPath(route[0].exit);
-        if (route.length >= 2) {
-          return this.creep.moveTo(exit, config.moveToOpts);
-        } else {
-          const ret = PathFinder.search(this.creep.pos, exit, { maxRooms: 2 });
-          return this.creep.move(this.creep.pos.getDirectionTo(ret.path[0]));
-        }
+      const route = GameMap.findRoute(this.creep.room.name, targetPos.roomName);
+      if (!route || route === ERR_NO_PATH || route.length === 0) {
+        return ERR_NO_PATH;
       }
+
+      const mem = this.creep.memory;
+      let moveTo = Game.getObjectById(mem.target || mem.source || mem.powerBank);
+
+      if (!moveTo) {
+        const nextExitDir = route[0].exit;
+        moveTo = this.creep.pos.findClosestByPath(nextExitDir);
+        if (!moveTo) return ERR_NO_PATH; 
+      }
+
+      return this.creep.moveTo(moveTo, {
+        ...config.moveToOpts,
+        maxRooms: route.length + 1,
+        reusePath: 50,
+      });
     }
     return ERR_NO_PATH;
   }
 
   moveToRoom(roomName) {
-    if (this.creep.fatigue !== 0) {
-      return ERR_TIRED;
-    }
+    if (this.creep.fatigue > 0) return ERR_TIRED;
     const route = GameMap.findRoute(this.creep.room.name, roomName);
     if (route.length > 0) {
-      const exitPos = this.creep.pos.findClosestByRange(route[0].exit);
-      if (exitPos) {
-        return this.creep.moveTo(exitPos, config.moveToOpts);
-      }
+      // const mem = this.creep.memory;
+      // const moveTo = Game.getObjectById(mem.target || mem.source || mem.powerBank);
+      // if (route.length === 1 && moveTo) {
+      //   this.creep.moveTo(moveTo, config.moveToOpts);
+      // } else {
+        const exitPos = this.creep.pos.findClosestByRange(route[0].exit);
+        if (exitPos) {
+          return this.creep.moveTo(exitPos, { ...config.moveToOpts, reusePath: 50 });
+        }
+      // }
     }
     return ERR_NO_PATH;
+  }
+
+  travelToShard(targetShard, targetRoom) {
+    // moves along a predetermined path to the desired room in the desired shard
+    const path = {
+      shard3: { targetRoom: 'E10N50', portal: '5c0e406c504e0a34e3d61dc0' }, // include pos in the future?
+      shard2: { targetRoom: 'E10N50', portal: '59f1c0062b28ff65f7f213f9' },
+      shard1: { targetRoom: 'W3N51', portal: '' },
+    };
+
+    if (Game.shard.name !== targetShard) {
+      if (path && path[Game.shard.name]) {
+        if (this.room.name === path[Game.shard.name].targetRoom) {
+          this.usePortal(path[Game.shard.name].portal);  
+        } else {
+          this.setTask('moveToRoom');
+          this.set('_pos', { x: 25, y: 25, roomName: path[Game.shard.name].targetRoom });
+        }
+      }
+    } else {
+      this.enterStandby();
+    }
+  }
+
+  moveAway(target) {
+    const dx = this.creep.pos.x - target.pos.x;
+    const dy = this.creep.pos.y - target.pos.y;
+    const nx = Math.max(1, Math.min(48, this.creep.pos.x + dx));
+    const ny = Math.max(1, Math.min(48, this.creep.pos.y + dy));
+    return this.creep.moveTo(nx, ny);
   }
 
   attack(target) {
@@ -268,38 +363,41 @@ class BaseCreep {
     return status;
   }
 
-  rangedAttack(target) {
+  rangedAttack(target, maxDistance = 2, minDistance = 2) {
     if (typeof target === 'string') target = Game.getObjectById(target);
-
-    if (target && !this.creep.pos.inRangeTo(target, 3)) {
-      const status = this.creep.moveTo(target);
-      return ERR_NOT_IN_RANGE;
-    } else if (!target) {
+    if (!target) {
       this.enterStandby();
+    }
+
+    const range = this.creep.pos.getRangeTo(target);
+    if (range > maxDistance) {
+      this.moveTo(target);
+      if (range > 3) return ERR_NOT_IN_RANGE; // max range is 3
     }
 
     const status = this.creep.rangedAttack(target);
     if (status == ERR_NOT_IN_RANGE) {
       this.moveTo(target);
+    } else if (range < minDistance) {
+      this.moveAway(target);
     }
 
     return status;
-
   }
 
-  attackController(room) {
-    if (this.creep.room.name === room) {
-      const controller = this.creep.room.controller;
-      if (this.creep.pos.isNearTo(controller)) {
-        const status = this.creep.attackController(controller);
-        // if (status === OK) this.enterStandby();
-        if (status === ERR_INVALID_TARGET) this.setTask('reserve');
-      } else {
-        this.moveTo(controller);
-        return ERR_NOT_IN_RANGE;
-      }
+  attackController() {
+    const controller = this.creep.room.controller;
+    if (this.creep.pos.isNearTo(controller)) {
+      const status = this.creep.attackController(controller);
+      if (status === OK) {
+        this.creep.suicide();
+        // let travelTime = this.get('travelTime');
+        // if (travelTime && this.creep.ticksToLive >= travelTime) {
+        //   this.setTask('reclaim');
+        // }
+      } else if (status === ERR_INVALID_TARGET) this.enterStandby();
     } else {
-      this.moveToRoom(room);
+      this.moveTo(controller);
       return ERR_NOT_IN_RANGE;
     }
   }
@@ -360,23 +458,6 @@ class BaseCreep {
     return status;
   }
 
-  withdraw(target, resource = RESOURCE_ENERGY, amount = null) {
-    if (typeof target === 'string') target = Game.getObjectById(target);
-
-    if (target && !this.creep.pos.isNearTo(target)) {
-      this.moveTo(target);
-      return ERR_NOT_IN_RANGE;
-    }
-
-    const withdrawAttempt = this.creep.withdraw(target, resource, amount);
-    if (withdrawAttempt == ERR_NOT_IN_RANGE) {
-      this.moveTo(target);
-    } else if (withdrawAttempt === ERR_FULL || withdrawAttempt === ERR_NOT_ENOUGH_RESOURCES || withdrawAttempt === ERR_INVALID_TARGET) {
-      this.enterStandby();
-    }
-    return withdrawAttempt;
-  }
-
   transfer(target, resource = RESOURCE_ENERGY, amount = null) {
     if (typeof target === 'string') target = Game.getObjectById(target);
 
@@ -397,8 +478,6 @@ class BaseCreep {
     for (const resourceType in this.creep.carry) {
       this.creep.drop(resourceType);
     }
-
-    this.enterStandby();
   }
 
   build(target = null) {
@@ -418,11 +497,7 @@ class BaseCreep {
       }
 
       const status = this.creep.build(target);
-      // console.log('build', target, status);
-
-      if (status === ERR_NOT_IN_RANGE) {
-        this.moveTo(target);
-      } else if (status === ERR_INVALID_TARGET || status === ERR_NOT_ENOUGH_RESOURCES) {
+      if (status === ERR_INVALID_TARGET || status === ERR_NOT_ENOUGH_RESOURCES) {
         this.enterStandby();
       }
 
@@ -451,7 +526,10 @@ class BaseCreep {
       this.moveTo(target);
     } else if (status === ERR_INVALID_TARGET || status === ERR_NOT_ENOUGH_RESOURCES) {
       this.enterStandby();
+    } else if (status === OK && target.hitsMax === target.hits) {
+      this.enterStandby();
     }
+
     return status;
   }
 
@@ -504,13 +582,13 @@ class BaseCreep {
 
   getRandomSource() {
     const sources = this.creep.room.find(FIND_SOURCES);
-    return sources.rand();
+    return Game.getObjectById(sources.rand());
   }
 
-  canHarvest() {
-    const harvestPower = this.getHarvestPower();
+  canHarvest(resource = 'energy') {
+    const harvestPower = this.getHarvestPower(resource);
     const carryCount = this.creep.getActiveBodyparts(CARRY);
-    const freeCapacity = this.creep.store.getFreeCapacity(RESOURCE_ENERGY);
+    const freeCapacity = this.creep.store.getFreeCapacity(resource);
 
     const creepWillOverflow = freeCapacity === 0 || harvestPower > freeCapacity;
     const canHarvest = (!carryCount && !this.isEnergyFull()) || (carryCount && !creepWillOverflow);
@@ -518,17 +596,26 @@ class BaseCreep {
     return canHarvest;
   }
 
-  harvest(target = null) {
+  harvest(target) {
     if (typeof target === 'string') target = Game.getObjectById(target);
-
-    if (!target) {
-      target = this.getRandomSource();
-      this.setTarget(target.id);
-    }
-
-    if (target && !this.creep.pos.isNearTo(target)) {
-      this.moveTo(target);
+    // console.log('harvest', target, this.creep.pos.isNearTo(target));
+    if (!this.creep.pos.isNearTo(target)) {
+      this.creep.moveTo(target);
       return ERR_NOT_IN_RANGE;
+    } else if (target.cooldown && target.cooldown > 4) {
+      const resourceType = target.mineralType || target.depositType;
+      if (this.creep.store.getUsedCapacity(resourceType) > 0) {
+        const haulers = this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: { memory: { job: 'hauler' } } })
+          .sort((a, b) => {
+            return a.store.getFreeCapacity('energy') - b.store.getFreeCapacity('energy');
+          });
+
+        if (haulers.length > 0 && haulers[0].store.getFreeCapacity(resourceType) !== 0) {
+          this.setTask('unload', haulers[0].id);
+          this.set('resource', resourceType);
+        }
+      }
+      return ERR_TIRED;
     }
 
     const status = this.creep.harvest(target);
@@ -603,14 +690,40 @@ class BaseCreep {
 
   }
 
-  load(target = null, resource = RESOURCE_ENERGY, amount = null) {
+  dismantle(target) {
     if (typeof target === 'string') target = Game.getObjectById(target);
 
-    if (target) {
-      const status = this.withdraw(target, resource, amount);
-      if (status == ERR_INVALID_TARGET) this.set('target', undefined);
+    if (!target) {
+        this.enterStandby();
+    } else if (!this.creep.pos.isNearTo(target)) {
+      this.creep.moveTo(target);
+      return ERR_NOT_IN_RANGE;
+    } else {
+      const status = this.creep.dismantle(target);
+      if (status === ERR_INVALID_TARGET) {
+        this.enterStandby();
+      }
       return status;
     }
+  }
+
+  load(target = null, resource = RESOURCE_ENERGY, amount = null) {
+    if (typeof target === 'string') target = Game.getObjectById(target);
+    if (!target) return ERR_INVALID_TARGET;
+
+    if (!this.creep.pos.isNearTo(target)) {
+      this.moveTo(target);
+      return ERR_NOT_IN_RANGE;
+    }
+
+    const status = this.creep.withdraw(target, resource, amount);
+    // if (this.creep.name === 'hauler-77952785-chan') console.log('load', target, resource, status);
+
+    if (status === OK || status === status || status === ERR_INVALID_TARGET || status === ERR_FULL) {
+      this.enterStandby();
+    }
+
+    return status;
   }
 
   unload(target = null, resource = RESOURCE_ENERGY, amount = null) {
@@ -624,13 +737,19 @@ class BaseCreep {
         const targets = this.findEmptyStorages();
         if (targets && targets[0]) target = targets[0];
       }
-    } else if (target && !this.creep.pos.isNearTo(target)) {
-      this.creep.moveTo(target);
-      return ERR_NOT_IN_RANGE;
+    } else if (target) {
+      if (!this.creep.pos.isNearTo(target)) {
+        if (this.creep.room.name !== target.pos.roomName) {
+          this.moveToRoom(target.pos.roomName);
+        } else {
+          this.moveTo(target);
+        }
+        return ERR_NOT_IN_RANGE;
+      }
     }
 
     const status = this.transfer(target, resource, amount);
-    // console.log('unload', target, resource, status)
+    // if (this.creep.name === 'hauler-77952785-chan') console.log('unload', target, resource, status)
     if (status === ERR_NOT_ENOUGH_RESOURCES || status === ERR_FULL || status === ERR_INVALID_TARGET) {
       this.enterStandby();
     }
@@ -648,6 +767,45 @@ class BaseCreep {
 
     let target = hostileCreep ? hostileCreep : warTargets;
     const status = this.attack(target);
+    if (status === ERR_INVALID_TARGET) {
+      this.enterStandby();
+    }
+    return status;
+  }
+
+  // pass an array of creeps to check their HP instead!
+  triage(creeps = []) {
+    let woundedCreeps = [];
+
+    if (creeps.length > 0) {
+      woundedCreeps = creeps.sort((a, b) => a.hits > b.hits);
+    } else {
+      woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 7, { filter: creep => creep.hits < creep.hitsMax })
+        .sort((a, b) => a.hits > b.hits);
+    }
+
+    let status;
+    if (woundedCreeps.length > 0) {
+      const range = this.creep.pos.getRangeTo(woundedCreeps[0]);
+      if (range === 1) {
+        status = this.creep.heal(woundedCreeps[0]);
+
+        // this reduces damage when there is a single healer working on multiple units for powerbanks
+        // if (status === OK && !this.get('target')) {
+        //   this.setTarget(woundedCreeps[0]);
+        // }
+      } else if (range <= 5) {
+        status = this.creep.rangedHeal(woundedCreeps[0]);
+        if (range >= 2) {
+          this.moveTo(woundedCreeps[0]);
+        }
+      } else {
+        this.moveTo(woundedCreeps[0]);
+      }
+    } else {
+      this.enterStandby();
+      this.set('nextJobCheck', Game.time + 5);
+    }
     return status;
   }
 
@@ -675,19 +833,24 @@ class BaseCreep {
   }
 
   eolSequence() {
-    const nearDeath =  this.creep.ticksToLive <= 100;
-    if (nearDeath && this.get('job') === 'upgrader' && !this.hasTask('unboost') && !this.hasTask('recharge')) {
-      const isBoosted = nearDeath && this.creep.body.reduce((acc, part) => part.type === WORK && part.boost ? true : acc, false);
+    const mem = this.creep.memory;
 
-      if (nearDeath && isBoosted && this.isEmpty()) {
-        const idleLab = LabController.findIdleLab(this.creep.room);
+    // update to check only creeps flagged as boosted. 
+    if (mem.boosted || mem.job === 'upgrader') {
+      const nearDeath = this.creep.ticksToLive <= 100;
+      if (nearDeath && !this.hasTask('unboost') && !this.hasTask('recharge')) {
+        const isBoosted = this.creep.body.reduce((acc, part) => part.type === WORK && part.boost ? true : acc, false);
 
-        if (idleLab) {
-          this.enterStandby();
-          this.setTask('unboost', idleLab.id); 
+        if (nearDeath && isBoosted && this.isEmpty()) {
+          const idleLab = LabController.findIdleLab(this.creep.room);
+
+          if (idleLab) {
+            this.enterStandby();
+            this.setTask('unboost', idleLab.id); 
+          }
         }
+        return;
       }
-      return;
     }
   }
 
@@ -696,14 +859,18 @@ class BaseCreep {
   }
 
   processQueue() {
-    // task queue
-    if (!this.taskQueue.isEmpty) {
-      const qtask = this.taskQueue.shift();
+    const taskQueue = this.taskQueue;
+    if (!taskQueue.isEmpty) {
+      const qtask = taskQueue.shift();
+      this.setTaskQueue(taskQueue);
+
       if (typeof qtask === 'object') {
-        if (qtask.name) {
-          this.setTask(qtask.name);
+        const task = qtask.name || qtask.task;
+        if (task) {
+          this.setTask(task);
           if (qtask.target) this.setTarget(qtask.target);
           if (qtask.resource) this.set('resource', qtask.resource);
+          if (qtask.amount) this.set('amount', qtask.amount);
         }
       } else {
         this.setTask(qtask);
@@ -713,6 +880,8 @@ class BaseCreep {
 
   runTask() {
     try {
+      const source = Game.getObjectById(this.get('source'));
+      const bank = Game.getObjectById(this.get('powerBank'));
       let task = this.task;
       let target = this.target;
       let resource = this.resource;
@@ -721,22 +890,28 @@ class BaseCreep {
 
       // basic task operation
       switch (task) {
+        case 'targetRoom':
         case 'moveToRoom':
-          if (this.creep.room.name === target) {
+          // this.set('task', 'moveToRoom')
+          const pos = this.get('_pos');
+          const targetRoom = pos ? pos.roomName : this.get('targetRoom');
+          if (this.creep.room.name === targetRoom) {
             // find nearest exit && this.creep.move(AWAY_FROM_EXIT)
+            if (this.room.controller) this.creep.moveTo(this.room.controller);
+            else this.creep.moveTo(new RoomPosition(25, 25, targetRoom))
             this.enterStandby();
           } else {
-            this.moveToRoom(targetRoom);
+            let status = this.moveToRoom(targetRoom || this.get('homeRoom'));
           }
           break;
 
         case 'moveTo':
+          // console.log('MOVETO target', target)
           status = this.moveTo(target);
           if (this.creep.pos.getRangeTo(target) === 0) this.enterStandby();
           break;
 
         case 'pickup':
-          const source = Game.getObjectById(this.get('source'));
           const energyNearSource = source && source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
 
           if (energyNearSource && energyNearSource.pos.isNearTo(source)) {
@@ -763,7 +938,7 @@ class BaseCreep {
 
         case 'unload':
           // nothing to unload or target the is full
-          if (Object.keys(this.creep.store).length === 0) this.enterStandby();
+          if (!global.hasKeys(this.creep.store)) this.enterStandby();
           else if (target && target.store && target.store.getFreeCapacity() === 0) this.enterStandby();
 
           // non energy resources default to storage.
@@ -772,6 +947,9 @@ class BaseCreep {
           } else if (!target) {
             // how can I best prevent this search with out adding it to too many ticks
 
+            // const spawns = global.rooms[this.room.name] && global.rooms[this.room.name].spawns;
+            // what if I just assume I need to put energy in the primary?
+            // const extensions = global.rooms[this.room.name] && global.rooms[this.room.name].extensions;
             if (!target && this.creep.room.energyCapacityAvailable - this.creep.room.energyAvailable > 0) {
               target = this.creep.pos.findClosestByPath(FIND_STRUCTURES, {
                 filter: (structure) => (structure.structureType == STRUCTURE_SPAWN && structure.store.getFreeCapacity(RESOURCE_ENERGY) >= 50)
@@ -780,30 +958,23 @@ class BaseCreep {
             }
 
             if (!target && this.creep.room.memory.tEnergy) {
-              const lowEnergyTowers = Object.keys(this.creep.room.memory.tEnergy).map(id => Game.getObjectById(id));
-              const nearestTower = lowEnergyTowers.length > 0 ? this.creep.pos.findClosestByRange(lowEnergyTowers) : null;
-              if (nearestTower) target = nearestTower; 
+              for (const lowEnergyTower in this.creep.room.memory.tEnergy) {
+                target = lowEnergyTower;
+                break; // Exit immediately after finding the first key
+              }
             }
 
             const spawn = this.getSpawn();
             const spawnRoom = spawn && spawn.room;
-            const upgradeContainer = spawnRoom.memory.upgradeContainer && Game.getObjectById(spawnRoom.memory.upgradeContainer);
+            const upgradeContainer = spawnRoom && spawnRoom.memory.upgradeContainer && Game.getObjectById(spawnRoom.memory.upgradeContainer);
             if (!target && upgradeContainer && upgradeContainer.store.getUsedCapacity(RESOURCE_ENERGY) <= 1800) {
               target = upgradeContainer;
             }
 
             if (!target && this.creep.room.memory.labEnergy) {
-              const lowEnergyLabs = Object.keys(this.creep.room.memory.labEnergy).map(id => Game.getObjectById(id));
-              // const labs = this.creep.room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_LAB } });
-              // const lowEnergyLab = this.findLowEnergyStore(labs);
-              // if (lowEnergyLab) target = lowEnergyLab;
-              const nearestLab = this.creep.pos.findClosestByRange(lowEnergyLabs);
-              if (nearestLab) {
-                if (nearestLab.store.getFreeCapacity('energy') >= 500) {
-                  target = nearestLab;
-                } else {
-                  this.creep.room.memory.labEnergy[nearestLab.id] = undefined;
-                }
+              for (const lowEnergyLab in this.creep.room.memory.labEnergy) {
+                target = lowEnergyLab;
+                break; // Exit immediately after finding the first key
               }
             }
 
@@ -812,7 +983,7 @@ class BaseCreep {
               target = terminal;
             }
 
-            const factory = this.creep.room.memory.factory && Game.getObjectById(this.creep.room.memory.factory.id);
+            const factory = global.rooms[this.room.name] && global.rooms[this.room.name].factory;
             if (!target && factory && factory.store.getUsedCapacity(RESOURCE_ENERGY) < 10000) {
               target = factory;
             }
@@ -828,11 +999,18 @@ class BaseCreep {
               target = this.creep.pos.findClosestByPath(FIND_MY_CREEPS, {
                 filter: (creep) => {
                   const assistingRecharge = creep.memory.task === 'recharge';
-                  const loadingUpgrader = creep.memory.job === 'upgrader' && creep.memory.task === 'upgrade';
+                  const assistingUpgrade = !upgradeContainer && creep.memory.task === 'upgrade';
                   const assistingDrone = creep.memory.job === 'drone' && creep.memory.task === 'build';
-                  return assistingRecharge || assistingDrone || loadingUpgrader;
+                  return assistingRecharge || assistingUpgrade || assistingDrone;
                 },
               });
+            }
+
+            if (!target && this.room.memory.powerSpawn) {
+              const powerSpawn = Game.getObjectById(this.room.memory.powerSpawn);
+              if (powerSpawn && powerSpawn.store.getFreeCapacity('energy') >= 1000) {
+                target = powerSpawn;
+              }
             }
 
             if (!target && terminal && terminal.store.getFreeCapacity(RESOURCE_ENERGY) > 10000) {
@@ -840,18 +1018,34 @@ class BaseCreep {
             }
           }
 
-
           if (target && !this.getTarget()) this.setTarget(target);
           status = this.unload(target, resource, amount);
           break;
 
         case 'drop': 
-          status = this.dropAll();
+          if (resource) {
+            status = this.creep.drop(resource);
+          } else {
+            status = this.dropAll();
+          }
+          this.enterStandby();
           break;
 
         case 'harvest':
-          if (this.canHarvest()) {
-            status = this.harvest(target || this.get('source'));
+          if (this.get('safeHarvest') && this.creep.hits !== this.creep.hitsMax) {
+            // flee nearest enemy
+          }
+          // can I pass the resource??
+          if (this.canHarvest(source && source.mineralType)) {
+            target = target || this.get('source');
+            if (!target) {
+              target = this.getRandomSource();
+              this.setTarget(target.id);
+            } else if (typeof target === 'string') {
+              target = Game.getObjectById(target);
+            };
+
+            status = this.harvest(target);
           } else {
             status = this.enterStandby();
           }
@@ -866,6 +1060,29 @@ class BaseCreep {
           break;
 
         case 'repair':
+          if (!target) {
+            let repairTarget = this.room.find(FIND_STRUCTURES, { filter: (struct) => {
+              const minimumDamage = (struct.hitsMax - struct.hits) >= 1000;
+              if (!minimumDamage) return false;
+              switch(struct.structureType) {
+                case STRUCTURE_CONTAINER:
+                  return struct.hits < 175000;
+                case STRUCTURE_ROAD:
+                  return struct.hits > 5000 && struct.hits < 550000;
+                case STRUCTURE_WALL:
+                case STRUCTURE_RAMPART:
+                  return struct.hits <= 12000000;
+              }
+            }}).sort((a, b) => a.hits - b.hits).first();
+
+            if (repairTarget) {
+              target = repairTarget;
+              this.set('target', repairTarget.id);
+            } else {
+              // this.creep.say('OH YAEH');
+            }
+          }
+
           status = this.repair(target);
           break;
 
@@ -875,6 +1092,11 @@ class BaseCreep {
 
         case 'energyTransfer':
           status = this.energyTransfer();
+          break;
+
+        case 'dismantle':
+          status = this.dismantle(target);
+          // console.log('dismantle', status)
           break;
 
         case 'recharge':
@@ -888,17 +1110,11 @@ class BaseCreep {
           break;
 
         case'power-attack':
-          if (this.creep.ticksToLive <= 500) {
-            // job change allows the hive to spawn a new tank
-            this.set('job', 'soldier');
-          }
           if (this.creep.hits < 1000) break;
         case 'attack':
-          status = this.attack(this.get('target'));
-          break;
-
-        case 'range-attack':
-          status = this.rangedAttack(this.get('target'));
+          let tar = this.get('target');
+          if (!this.creep.pos.isNearTo(tar)) this.moveTo(tar);
+          status = this.attack(tar);
           break;
 
         case 'siege':
@@ -910,41 +1126,72 @@ class BaseCreep {
           }
           break;
 
-        case 'triage':
-          const woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 5, { filter: creep => creep.hits < creep.hitsMax })
-            .sort((a, b) => a.hits > b.hits);
+        case'power-range-attack':
+          if (bank && this.creep.pos.getRangeTo(bank) === 1) {
+            this.moveToRoom(this.get('homeRoom'));
+          }
+          if (this.creep.hits / this.creep.hitsMax <= 0.9) {
+            const status = this.creep.heal(this.creep);
+            if (status === OK) break;
+          } else {
+            // const status = this.triage();
+            // if (status === OK) break;
+          }
+        case 'range-attack':
+          status = this.rangedAttack(this.get('target'));
+          break;
 
-          if (woundedCreeps.length > 0) {
-            if (this.creep.pos.isNearTo(woundedCreeps[0])) {
-              status = this.creep.heal(woundedCreeps[0]);
-            } else {
-              if (woundedCreeps.length > 0) this.creep.rangedHeal(woundedCreeps[0]);
-              status = this.moveTo(woundedCreeps[0]);
-            }
+        case 'triage':
+          // what if every few ticks, I remember which creeps I am trying to triage.
+          if (this.creep.hits / this.creep.hitsMax <= 0.9) {
+            this.creep.heal(this.creep);
+          } else {
+            let squad = global.squads[this.get('powerBank')];
+            this.triage(squad);
           }
           break;
+
+        case 'power-heal':
+          if (bank) {
+            const rangeToBank = this.creep.pos.getRangeTo(bank);
+            if (rangeToBank === 1) this.moveAway(bank);
+            else if (rangeToBank >= 5) this.moveTo(bank);
+          }
+
+          if (this.creep.hits / this.creep.hitsMax <= 0.9) {
+            this.creep.heal(this.creep);
+            break;
+          } else if (!this.get('target')) {
+            let squad = global.squads[this.get('powerBank')];
+            if (squad && squad.length > 0) {
+              const status = this.triage(squad);
+              break;
+            }
+          }
 
         case 'heal':
           if (!target) {
             const woundedCreeps = this.creep.pos.findInRange(FIND_MY_CREEPS, 3, { filter: creep => creep.hits < creep.hitsMax })
               .sort((a, b) => a.hits > b.hits);
             target = this.creep.pos.findClosestByRange(FIND_MY_CREEPS, { filter: creep => creep.hits < creep.hitsMax });
-          }
+          } else if (typeof target === 'string') target = Game.getObjectById(target);
 
           if (target) {
-            if (this.creep.pos.isNearTo(target)) {
+            if (target.hits === target.hitsMax) {
+              this.enterStandby();
+            } else if (this.creep.pos.isNearTo(target)) {
               status = this.creep.heal(target);
             } else {
               status = this.creep.rangedHeal(target);
               this.moveTo(target);
             }
           } else {
-            status = this.enterStandby();
+            this.enterStandby();
           }
           break;
 
         case 'attackController':
-          status = this.attackController(this.get('targetRoom'));
+          status = this.attackController();
           break;
 
         case 'reserve':
@@ -1007,6 +1254,20 @@ class BaseCreep {
         default:
           // do nothing
           // todo: what can I do here about standby?
+          break;
+
+        case 'sign':
+          ['Beware the Square', 'Four is More'];
+          const message = this.get('message');
+          if (message) {
+            const controller = this.room.controller;
+            if (this.creep.pos.isNearTo(controller)) {
+              const status = this.creep.signController(this.room.controller, message);
+              if (status === OK) this.enterStandby();
+            } else {
+              this.creep.moveTo(controller);
+            }
+          }
           break;
       }
 

@@ -98,11 +98,32 @@ class TerminalController {
 		this.set('requests', requests);
 	}
 
+	requestEnergyInjection() {
+		// console.log('I NEED ENERGY PLZ');
+		const myRoom = this.room.name;
+		for (const roomName in global.hives) {
+    	const hive = global.hives[roomName];
+    	if (hive.terminalController && roomName !== myRoom) {
+    		const terminal = hive.terminalController.terminal;
+    		if (terminal && terminal.cooldown === OK && terminal.store['energy'] >= 10000) {
+    			terminal.send('energy', 5000, myRoom);
+    		}
+    	}
+    }
+	}
+
 	manageStore() {
+		const drone = this.taskController.getFreeDrone();
+  	if (!drone) {
+  		this.set('nextManageStore', Game.time + 25);
+  		return;
+  	}
+
 		const requestedResources = this.get('requestedResources') || { energy: 10000 };
     const resources = requestedResources && Object.keys(requestedResources);
     let tasks = [];
 
+    // const storageHasCap
     Object.keys(this.terminal.store).forEach(resource => {
     	const diff = this.terminal.store.getUsedCapacity(resource) - (requestedResources[resource] || 0);
       if (diff >= 10000) {
@@ -110,25 +131,32 @@ class TerminalController {
       	for (let count = 0; count < 5; count++) {
         	tasks = [...tasks, ...task];
       	}
-      } else if (diff >= 1000) {
+      } else if (diff >= 1000 || !requestedResources[resource]) {
       	tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.terminal, this.storage)];
       }
     });
 
+    // allowedResources? - if allowed but not requested, keep in store but don't attempt to load.
     resources.forEach(resource => {
       if (requestedResources[resource] > this.terminal.store[resource] && this.storage.store.getUsedCapacity(resource) > 0) {
+      	// moving resources from storage to terminal
         tasks = [...tasks, ...this.taskController.createTransferTask(resource, this.storage, this.terminal)];
       }
     });
-
+		
     if (tasks.length) {
-      this.taskController.issueTask(tasks);
+    	drone.setTaskQueue(tasks);
+      // this.taskController.issueTask(tasks);
+    	this.set('nextManageStore', Game.time + 52);
+    } else {
+    	this.set('nextManageStore', Game.time + 271);
     }
 	}
 
   manageTerminal() {
   	try {
-	    if (Game.time % 50 === 0) this.manageStore();
+  		const nextManageStore = this.get('nextManageStore') || 0;
+	    if (nextManageStore <= Game.time) this.manageStore();
 
 	    this.marketController = new MarketController(this.room);
 	    const terminal = this.terminal;
@@ -136,94 +164,99 @@ class TerminalController {
 	    const transfers = this.get('transfers');
 	    const requestedResources = this.get('requestedResources') || {};
 
-	    // leaking batteries and reductant
-	    Object.keys(this.terminal.store).forEach(resource => {
-		    if (this.terminal.store[resource] >= 1000) {
-	  			this.marketController.createSellOrder(resource, 1000);
-		    }
-    	});
+	    // if I have a lot of my rooms resource such as K or K_bar, I should set it as a requestedResource so I can share with other rooms. 
+	    // I will always get low of the item, but when does it matter?
+	    // - It should only matter if I am getting low on bars, I want to keep a set amount of condensed resources available for manufacturing purposes. 
+
 
 	    if (terminal.cooldown === OK) {
-	    	// transfers = { [resource]: spawnName }
-		    transfers && Object.keys(transfers).forEach(resource => {
-		      const room = transfers && transfers[resource];
-		      const requestAmount = requestedResources && requestedResources[resource];
-
-		      // transfers resources in batches of 5000 or less
-		      const transferAmount = requestAmount > 5000 ? 5000 : requestAmount;
-		      if (requestAmount && terminal.store[resource] >= transferAmount) {
-		        const status = terminal.send(resource, terminal.store[resource], transfers[resource]);
-		        if (status === OK) {
-		          requestedResources[resource] = requestedResources[resource] - transferAmount;
-		          if (requestedResources[resource] >= 0) {
-		          	requestedResources[resource] = undefined;
-			          transfers[resource] = undefined;
-
-		    				this.set('requestedResources', requestedResources);
-		    				this.set('transfers', transfers);
-		          }
-		        }
-		      }
-		    });
-
-		    // sell commodities to the npc market
-		    if (Game.time % 33 === OK) ['concentrate', 'switch'].forEach(commodity => {
-		    	if (this.terminal.store[commodity] >= 0) {
-		    		this.marketController.sell(commodity);
-		    	}
-		    });
-
-		    // sell excess resources
-	    	Object.keys(this.terminal.store).forEach(resource => {
-    			const config = this.marketController.getConfig(resource);
-	    		if (config && config.sellPrice) {
-		    		if (config.sellOrderPrice) {
-							this.marketController.createSellOrder(resource, 1000);
-		    		} else if (config.minPrice) {
-		    			this.marketController.sell(resource);
+		    // sells resources as configured
+		    if (Game.time % 33 === OK && Game.cpu.bucket > 5500) {
+			    for (const resource in this.terminal.store) {
+	    			const config = this.marketController.getConfig(resource);
+		    		if (config) {
+			    		if (config.sellOrderPrice) {
+								this.marketController.createSellOrder(resource, 1000);
+			    		} else if (config.minPrice) {
+			    			this.marketController.sell(resource);
+			    		}
 		    		}
-	    		}
-	    	});
+		    	}
+		    }
+
+	    	// pausing transfer code for requests; rooms have been configured to keep extra resources in the terminal
+	    	// transfers = { [resource]: spawnName }
+		    // transfers && Object.keys(transfers).forEach(resource => {
+		    //   const room = transfers && transfers[resource];
+		    //   const requestAmount = requestedResources && requestedResources[resource];
+
+		    //   // transfers resources in batches of 5000 or less
+		    //   const transferAmount = requestAmount > 5000 ? 5000 : requestAmount;
+		    //   if (requestAmount && terminal.store[resource] >= transferAmount) {
+		    //     const status = terminal.send(resource, terminal.store[resource], transfers[resource]);
+		    //     if (status === OK) {
+		    //       requestedResources[resource] = requestedResources[resource] - transferAmount;
+		    //       if (requestedResources[resource] >= 0) {
+		    //       	requestedResources[resource] = undefined;
+			  //         transfers[resource] = undefined;
+
+		    // 				this.set('requestedResources', requestedResources);
+		    // 				this.set('transfers', transfers);
+		    //       }
+		    //     }
+		    //   }
+		    // });
 
 	    	// handle requests for resources
-	    	// let cpu = Game.cpu.getUsed();
-		    if (Game.time % 33 === OK) Object.keys(global.hives).forEach(roomName => {
-		    	const hive = global.hives[roomName];
-		    	const room = Game.rooms[roomName];
+	    	const terminalEnergy = this.terminal.store.getUsedCapacity('energy');
+	    	const nextRequestCheck = this.get('nextRequestCheck') || 0;
+		    if (nextRequestCheck <= Game.time && terminalEnergy >= 8000) {
+		    	const storedEnergy = storage.store.getUsedCapacity('energy');
 
-		    	if (hive.terminalController && room.name !== this.room.name) {
-		    		const requests = hive.terminalController.get('requests'); // Memory.rooms[roomName].terminal.requests;
+		    	for (const roomName in global.hives) {
+			    	const hive = global.hives[roomName];
+			    	const room = Game.rooms[roomName];
 
-		    		requests && Object.keys(requests).forEach(resource => {
-		    			if (resource === 'energy' && this.storage.store.getUsedCapacity('energy') >= 55000 && this.terminal.store.getUsedCapacity('energy') >= 10000) {
-		    				// if its an energy request, just fill it.
-		    				const status = this.sendResource(resource, 5000, roomName);
-		    				if (status === OK) {
-		    					Memory.rooms[roomName].terminal.requests[resource] = requests[resource] - 5000;
-		    					if (Memory.rooms[roomName].terminal.requests[resource] <= 0) {
-		    						Memory.rooms[roomName].terminal.requests[resource] = undefined;
-		    					}
-		    				}
-		    			} else {
-			    			// what about how much resource they have already?
-			    			if (this.terminal.store[resource] >= 0) {
-			    				const transferAmount = this.terminal.store[resource] > 5000 ? 5000 : this.terminal.store[resource];
-			    				const status = this.sendResource(resource, transferAmount, roomName);
-			    			} else {
-			    				const amount = this.storage.store.getUsedCapacity(resource) > requests[resource] ? requests[resource] : this.storage.store.getUsedCapacity(resource);
-				    			if (!this.transfering(resource) && amount > 0) {
-				    				this.createTransfer(roomName, resource, amount);
-				    				// requests are filled when possible, with no limit
-				    			}
+			    	// skips self
+			    	if (hive.terminalController && room.name !== this.room.name) {
+			    		const otherRoomTerminalMemory = Memory.rooms[roomName].terminal;
+			    		const requests = hive.terminalController.get('requests'); // Memory.rooms[roomName].terminal.requests;
+
+			    		requests && Object.keys(requests).forEach(resource => {
+			    			if (room.resourceAmount(resource) < requests[resource]) {
+			    				if (this.terminal.store[resource] > 0) {
+				    				const transferAmount = this.terminal.store[resource] > 5000 ? 5000 : this.terminal.store[resource];
+				    				const status = this.sendResource(resource, transferAmount, roomName);
+				    				if (status === OK) this.set('nextRequestCheck', Game.time + 52);
+			    				}
+			    				// note: shareables could be resources that are allowed to be moved outside of their terminal storage status
+			    				// ['H', 'K', 'O'] // no bars or other smaller things.. ops? power?
+			    				// stopped trying to fill requests the terminal is not prepared to fill based on configuration.
+				    			// 	const amount = this.storage.store.getUsedCapacity(resource) > requests[resource] ? requests[resource] : this.storage.store.getUsedCapacity(resource);
+					    		// 	if (!this.transfering(resource) && amount > 0) {
+					    		// 		this.createTransfer(roomName, resource, amount);
+					    		// 	}
 			    			}
-		    			}
-		    		});
-		    	}
-		    });
+			    		});
+
+			    		/** energy management */
+			    		// what if I set a higher threshold for certain rooms that should be more stable to share more often.
+			    		// if (room.storage <= 150000 && storedEnergy >= 225000 && terminalEnergy >= 25000) {
+
+			    		const hasHighEnergy = storedEnergy >= 200000 && terminalEnergy >= 25000;
+							const adjustedRequestedEnergy = (otherRoomTerminalMemory.requestedResources || {}).energy + 10000;
+							const roomEnergy = room.storage.store['energy'] + room.terminal.store['energy'];
+			    		if (hasHighEnergy && room.storage.store['energy'] <= 250000 && room.terminal.store['energy'] <= adjustedRequestedEnergy) {
+			    			const status = this.sendResource('energy', 15000, roomName);
+			    			if (status === OK) this.set('nextRequestCheck', Game.time + 73);
+			    		}
+			    	}
+			    }
+		    }
 		  }
   	} catch (e) {
   		console.log(this.room.name, 'terminal-crash', e.toString());
-  		throw (e);
+  		// throw (e);
   	}
   }
 

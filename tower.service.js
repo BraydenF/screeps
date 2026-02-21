@@ -2,7 +2,7 @@
 const spawn = Game.spawns['spawn'];
 const MIN_BUCKET = 25;
 const defaultTowerConfig = {
-  min_wall: 21500,
+  minWall: 21500,
 }
 
 // todo: move this note to somewhere it makes a bit more sense
@@ -17,7 +17,6 @@ const defaultTowerConfig = {
 //   maintenance_area: {ax: 0, ay: 0, bx: 49, by: 49},
 //   min_wall: 75000,
 // }
-// 
 
 const towerService = {
   getTowers: function(spawn) {
@@ -25,10 +24,111 @@ const towerService = {
       filter: { structureType: STRUCTURE_TOWER }
     });
   },
-  getHostileTarget: function(tower) {
-    const healer = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS, { filter: (creep) => creep.getActiveBodyparts(HEAL) > 0 });
-    const closestHostile = tower.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
-    return closestHostile;
+  findHostiles: function(room) {
+    const mem = room.memory;
+    const now = Game.time;
+
+    let refreshInterval = 7;
+    if (mem.encounter && now - mem.encounter.lastInteraction <= 30) {
+      refreshInterval = 4;
+    }
+
+    // Decide if we need to re-scan
+    const shouldRefresh = !mem.hostileCache ||
+      !mem.hostileCache.tick ||
+      now - mem.hostileCache.tick >= refreshInterval ||
+      (mem.encounter && now - mem.encounter.lastInteraction <= 10);
+
+    let hostileIds = [];
+
+    if (shouldRefresh) {
+      const creeps = room.find(FIND_HOSTILE_CREEPS);
+      hostileIds = [];
+
+      for (let i = 0; i < creeps.length; i++) {
+        const creep = creeps[i];
+        if (room.name === 'E4N51') {
+          const hasPlunder = Object.keys(creep.store).length > 0;
+          const smallFry = creep.body.length <= 3 || creep.hits <= 100;
+          const dangerous = creep.getActiveBodyparts(ATTACK) > 0 ||
+                          creep.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+                          creep.getActiveBodyparts(HEAL) > 0;
+
+          // temporary ceasfire
+          const ignored = ['vlc6wsw0l'].includes(creep.owner.username);
+
+          // console.log(creep.id, 'ignored', ignored);
+          if ((!hasPlunder && !smallFry && !dangerous) || ignored) {
+            // console.log(creep.id, 'ignored');
+            continue;
+          }
+        }
+        // console.log('hostile', creep.name);
+        hostileIds.push(creep.id);
+      }
+
+      // Update cache
+      mem.hostileCache = { tick: now, ids: hostileIds };
+
+      if (hostileIds.length > 0) {
+        if (mem.encounter) {
+          mem.encounter.lastInteraction = now;
+          if (hostileIds.length > mem.encounter.count) {
+            mem.encounter.count = hostileIds.length;
+          }
+        } else {
+          var firstCreep = Game.getObjectById(hostileIds[0]);
+          if (firstCreep) {
+            mem.encounter = {
+              owner: firstCreep.owner.username,
+              count: hostileIds.length,
+              startTime: now,
+              lastInteraction: now
+            };
+          }
+        }
+      }
+    } else {
+      hostileIds = mem.hostileCache.ids || [];
+    }
+
+    var liveHostiles = [];
+    for (var j = 0; j < hostileIds.length; j++) {
+      var creep = Game.getObjectById(hostileIds[j]);
+      if (creep) {
+        liveHostiles.push(creep);
+      }
+    }
+
+    return liveHostiles;
+  },
+  findRepairTargets: function(room, config) {
+    let minWallHealth = Infinity;
+    const repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
+      const criticallyLow = ((struct.hits / struct.hitsMax) <= 0.5) && (struct.hits <= 20000);
+      const minimumDamage = (struct.hitsMax - struct.hits) >= 1000;
+      if (criticallyLow) return criticallyLow;
+      if (!minimumDamage) return false;
+
+      switch(struct.structureType) {
+        case STRUCTURE_CONTAINER:
+          return struct.hits < 150000;
+        case STRUCTURE_ROAD:
+          return struct.hits > 5000 && struct.hits < 500000;
+        case STRUCTURE_WALL:
+        case STRUCTURE_RAMPART:
+          if (struct.hits < minWallHealth) {
+            minWallHealth = struct.hits;
+          }
+          return struct.hits < config.minWall;
+      }
+    }}).sort((a, b) => a.hits - b.hits);
+
+    if (minWallHealth >= config.minWall && minWallHealth < 12000000) {
+      config.minWall = minWallHealth;
+    }
+
+    return repairTargets;
   },
   getEnergyStatus: function(tower) {
     let status;
@@ -72,58 +172,67 @@ const towerService = {
     return towerHauler;
   },
   run: function(room, towers) {
-    // let cpu = Game.cpu.getUsed();
-    // What makes a player hostile?
-    // const hostileTargets = room.find(FIND_HOSTILE_CREEPS);
-    const hostileTargets = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
-    if (Game.time % 5 !== OK && hostileTargets.length === 0) return 0;
-    else if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
+    let mem = room.memory;
+    const config = mem.config || defaultTowerConfig;
 
-    const repairMultiplier = room.controller.level <= 3 ? 0.5 : 1 * room.controller.level * 0.5;
-    let repairTargets;
-    if (hostileTargets.length === OK) {
-      repairTargets = room.find(FIND_STRUCTURES, { filter: (struct) => {
-        const criticallyLow = ((struct.hits / struct.hitsMax) <= 0.5) && (struct.hits <= 20000);
-        const minimumDamage = (struct.hitsMax - struct.hits) >= 1000; // max heal is 800
-        const containers = struct.structureType === STRUCTURE_CONTAINER && struct.hits < 150000;
-        const walls = struct.structureType === STRUCTURE_WALL && struct.hits < (defaultTowerConfig.min_wall * repairMultiplier);
-        const ramparts = struct.structureType === STRUCTURE_RAMPART && struct.hits <= defaultTowerConfig.min_wall * repairMultiplier;
-        const tunnels = struct.structureType === STRUCTURE_ROAD && struct.hits > 5000 && struct.hits < 500000;
+    const hostileTargets = towerService.findHostiles(room);
+    if (hostileTargets.length > 0 && Game.time % 3 === OK) console.log(`User ${hostileTargets[0].owner.username} spotted!`);
 
-        return criticallyLow || (minimumDamage && (containers || walls || ramparts || tunnels));
-      }});
+    let repairTargets = [];
+    let minWallHealth = Infinity;
+    if (hostileTargets.length === 0) {
+      // manages encounter data
+      if (mem.encounter && mem.encounter.lastInteraction + 50 <= Game.time) {
+        if (mem.encounter.owner !== 'Invader') {
+          if (!mem.encounterHistory) mem.encounterHistory = [];
+          else if (mem.encounterHistory.length > 25) mem.encounterHistory = mem.encounterHistory.slice(0, 20);
+          mem.encounterHistory.push({ ...mem.encounter, length: mem.encounter.lastInteraction - mem.encounter.startTime });
+        }
+        mem.encounter = null;
+      }
+
+      if ((mem.nextRepairScan || 0) <= Game.time) {
+        repairTargets = towerService.findRepairTargets(room, config);
+
+        if (repairTargets.length === OK) {
+          mem.nextRepairScan = Game.time + 23;
+
+          if (mem.mode === 'reinforcing') {
+            // config.minWall = config.minWall + 250;
+            // mem.config = config;
+          } else if (config.reinforcing && room.storage.store['energy'] >= 135000) {
+            config.minWall = config.minWall + 250;
+            mem.config = config;
+          }
+          return;
+        }
+      }
+
     }
 
-    if (hostileTargets.length === OK && repairTargets.length === OK) return; // no targets
+    const totalEnergyCapacity = towers.length * 1000;
+    let totalEnergy = 0;
+    mem.tEnergy = {};
 
-    // let towerEnergy = 0;
-    room.memory.tEnergy = {};
     towers.forEach((tower) => {
+      totalEnergy = totalEnergy + tower.store['energy'];
       if (hostileTargets.length > 0) {
         // if (damagedCreep) {
         //   tower.heal(damagedCreep);
         // } else {
-          const status = tower.attack(hostileTargets[0]);
-        // }
+        const status = tower.attack(hostileTargets[0]);
       } else if (tower.store.getUsedCapacity(RESOURCE_ENERGY) >= 200 && repairTargets.length > 0) {
-        const target = tower.pos.findClosestByRange(repairTargets)
+        const target = tower.pos.findClosestByRange(repairTargets.slice(0, 3));
         if (target) tower.repair(target);
       }
 
-      // towerEnergy = towerEnergy + tower.store.getUsedCapacity('energy');
-      if (tower.store.getUsedCapacity('energy') <= 400) {
-        room.memory.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
+      const minEnergy = hostileTargets.length > 0 ? 700 : 400;
+      if (tower.store.getUsedCapacity('energy') <= minEnergy) {
+        mem.tEnergy[tower.id] = tower.store.getFreeCapacity('energy');
       }
     });
-    // console.log('t-cpu', Game.cpu.getUsed() - cpu);
 
-    // const totalTowerEnergy = towers.length * 1000;
-    // console.log('towerEnergy', towerEnergy, totalTowerEnergy, towerEnergy / totalTowerEnergy);
-    // if (room.controller.level >= 7 && towerEnergy < 1000) {
-    //   console.log('additional', 'tHauler', towerEnergy);
-    // }
-
-    // return towerEnergy;
+    room.memory = mem;
   }
 }
 

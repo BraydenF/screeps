@@ -14,6 +14,9 @@ const h10 = [...h5, ...h5]; // 2500
 // const w10m10 = [...w5, ...w5, ...m5, ...m5]; // cost 1500
 // const w15m15 = [...w5, ...w5, ...w5, ...m5, ...m5, ...m5]; // cost 1800
 const m2c2 = [MOVE, MOVE, CARRY, CARRY];
+const m1c2 = [MOVE, CARRY, CARRY];
+const m2c4 = [MOVE, MOVE, CARRY, CARRY, CARRY, CARRY]; // 300
+const m3c6 = [MOVE, MOVE, MOVE, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY]; // 450
 // const m5c5 = [...m5, ...c5]; // 250 capacity
 // const m10c10 = [...c5, ...m5, ...c5, ...m5]; // 500 capacity
 
@@ -151,6 +154,24 @@ class SpawnController {
     return createDrone(job, cost, memory);
   }
 
+  spawnInternalHauler(energyLimit = 300, memory = {}, instantSpawn) {
+    if (!this.spawn.spawning) {
+      let body = [MOVE, MOVE, MOVE, CARRY, CARRY, CARRY];
+
+      if (energyLimit >= 2250) body = [...m3c6, ...m3c6, ...m3c6, ...m3c6, ...m3c6];
+      else if (energyLimit >= 1800) body = [...m3c6, ...m3c6, ...m3c6, ...m3c6];
+      else if (energyLimit >= 1350) body = [...m3c6, ...m3c6, ...m3c6];
+      else if (energyLimit >= 900)  body = [...m3c6, ...m3c6];
+      else if (energyLimit >= 450)  body = m3c6;
+
+      if (instantSpawn) {
+        return this.createDrone('hauler', body, memory);
+      } else {
+        this.setNextSpawn({ job: 'hauler', body: body, memory });
+      }
+    }
+  }
+
   spawnHauler(energyLimit = 300, memory = {}, instantSpawn) {
     if (!this.spawn.spawning) {
       let body = [MOVE, MOVE, MOVE, CARRY, CARRY, CARRY];
@@ -175,20 +196,24 @@ class SpawnController {
 
   spawnUpgrader() {
     if (!this.spawn.spawning) {
-      const cost = this.room.energyCapacityAvailable < 1100 ? this.room.energyCapacityAvailable : 1100;
+      const cost = this.room.energyCapacityAvailable < 1150 ? this.room.energyCapacityAvailable : 1150;
       let body = [WORK, ...m2c2];
       const sourceIds = Object.keys(this.get('sources') || {});
 
       if (cost >= 1400) body = [...w5, ...w5, ...m2c2, CARRY, CARRY, CARRY];
-      else if (cost >= 1100) body = [...w5, WORK, WORK, WORK, ...m2c2, CARRY, MOVE];
+      else if (cost >= 1150) body = [...w5, WORK, WORK, WORK, ...m2c2, CARRY, MOVE, MOVE];
       else if (cost >= 1000) body = [...w5, WORK, WORK, ...m2c2, CARRY, MOVE];
       else if (cost >= 800) body = [...w5, WORK, ...m2c2];
       else if (cost >= 700) body = [...w5, ...m2c2];
       else if (cost >= 500) body = [WORK, WORK, WORK, ...m2c2];
       else if (sourceIds && sourceIds.length === 1) body = [...w5, ...m2c2];
 
-      if (this.room.controller.level >= 8 && this.room.storage.store['energy'] >= 200000) {
-        body = [...body, WORK, WORK, MOVE, WORK, WORK, MOVE, MOVE, WORK, WORK, MOVE, MOVE, WORK];
+      if (this.room.controller.level >= 8 && sourceIds.length > 1) {
+        if (this.room.memory.mode === 'standard' && this.room.storage.store['energy'] >= 200000) {
+          body = [...body, WORK, WORK, MOVE, WORK, WORK, MOVE, MOVE, WORK, WORK, MOVE, MOVE, WORK];
+        } else if (this.room.storage.store['energy'] <= 250000) {
+          body = [...w5, ...m2c2];
+        }
       }
       return this.createDrone('upgrader', body);
     }
@@ -213,6 +238,12 @@ class SpawnController {
         nearbyCreep.memory.task = 'standby';
       }
     }
+  }
+
+  getCost(body) {
+    let cost = 0;
+    body.forEach(part => cost = cost + BODYPART_COST[part]);
+    return cost;
   }
 
   report () {

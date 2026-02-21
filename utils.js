@@ -13,34 +13,33 @@ const emojis = [
     '💨','💣','💬','💭','💤','👋','🤚','✋','🖖',
 ];
 
-class Queue {
-    constructor(items = []) {
-        this.items = items;
-    }
-    enqueue(element) {
-        this.items.push(element); 
-    }
-    enQ(element) {
-        return this.enqueue(element);
-    }
-    dequeue() {
-        return this.isEmpty ? undefined : this.items.shift();
-    }
-    deQ() {
-        return this.dequeue();
-    }
-    peek() {
-        return this.isEmpty ? undefined : this.items[0];
-    }
-    get length() {
-        return this.items.length;
-    }
-    get isEmpty() {
-        return this.items.length === 0;
-    }
-}
+global.w5 = [WORK, WORK, WORK, WORK, WORK];
+global.w10 = [WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK, WORK];
 
-global.Queue = Queue;
+global.m5 = [MOVE, MOVE, MOVE, MOVE, MOVE];
+global.m10 = [...m5, ...m5]; // 500
+
+global.c5 = [CARRY, CARRY, CARRY, CARRY, CARRY]; // 250
+global.c10 = [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, CARRY];
+
+global.a5 = [ATTACK, ATTACK, ATTACK, ATTACK, ATTACK]; // 400
+global.ra5 = [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK]; // 400
+
+global.a10 = [...a5, ...a5]; // 800
+global.ra10 = [...ra5, ...ra5];
+
+global.h5 = [HEAL, HEAL, HEAL, HEAL, HEAL]; // 1250
+global.h10 = [...h5, ...h5]; // 2500
+
+global.m10c10 = [...c5, ...m5, ...c5, ...m5]; // 500 capacity
+global.w10m5 = [...w5, ...w5, ...m5]; // cost 1250
+global.w10m10 = [...w5, ...w5, ...m5, ...m5]; // cost 1500
+global.w15m15 = [...w5, ...w5, ...w5, ...m5, ...m5, ...m5]; // cost 1800
+global.m2c2 = [MOVE, MOVE, CARRY, CARRY];
+global.m5c5 = [...m5, ...c5]; // 250 capacity
+global.m10c10 = [...c5, ...m5, ...c5, ...m5]; // 500 capacity
+
+// intershard memory stuff?
 
 function roll() {
     return Math.floor(Math.random() * 100);
@@ -49,28 +48,20 @@ function roll() {
 global.roll = roll;
 
 const utils = {
-    randomColor: function randomColor() {
-        return Math.floor(Math.random()*16777215).toString(16);
-    },
-    randomSay: function randomSay() {
-        // idea: grood emojies by group / emotion
-        return emojis[Math.floor(Math.random()*emojis.length)];
-    },
-    roll,
-    toString: function (obj) {
-        const keys = Object.keys(obj);
-        console.log('***********************');
-        keys.forEach(key => {
-            console.log(key, obj[key]);
-        });
-    },
-    Queue,
+  randomColor: function randomColor() {
+    return Math.floor(Math.random()*16777215).toString(16);
+  },
+  randomSay: function randomSay() {
+    // idea: grood emojies by group / emotion
+    return emojis[Math.floor(Math.random()*emojis.length)];
+  },
 };
 
+/** prototypes */
 Array.prototype.rand = function() {
-    const index = Math.floor(Math.random()*this.length);
-    // console.log(`rand ${index} / this.length`);
-    return this[index];
+  const index = Math.floor(Math.random()*this.length);
+  // console.log(`rand ${index} / this.length`);
+  return this[index];
 };
 
 Array.prototype.first = function() {
@@ -84,60 +75,118 @@ Array.prototype.onFirst = function(func) {
 }
 
 Array.prototype.onEmpty = function(func) {
-    if (this.length == 0 && func) {
-        return func();
-    }
+  if (this.length == 0 && func) {
+    return func();
+  }
 }
 
-/** Test code that has been deprecated, wanted to keep the structure and basic idea */
-class MiningTeam {
-  constructor(spawn, source) {
-    this.key = `miningTeam-${source}`;
-    if (!Memory[this.key]) {
-      Memory[this.key] = { source: source, miner: null, haulers: [] }; 
-    }
+Room.prototype.getHive = function() {
+  return global.hives[this.name];
+}
 
-    this.spawn = spawn;
-    this.source = source;
-    this.memory = Memory.rooms[this.key];
+Room.prototype.getFactory = function() {
+  let roomGlobal = global.rooms[this.name];
+  return roomGlobal && roomGlobal.factory;
+}
 
-    const miners = spawn.room.find(FIND_MY_CREEPS, {
-      filter: (creep) => {
-        return creep.memory.source === source && creep.memory.job === 'miner';
-    }});
+Room.prototype.spawnController = function() {
+  const roomGlobal = global.rooms[this.name];
+  return roomGlobal && roomGlobal.spawnController;
+}
 
-    if (miners && miners.length) {
-      this.miner = miners[0];
-    }
+Room.prototype.labController = function() {
+  const roomGlobal = global.rooms[this.name];
+  return roomGlobal && roomGlobal.labController;
+}
 
-    const haulers = spawn.room.find(FIND_MY_CREEPS, {
-      filter: { memory: { source: source, job: 'hauler' } },
-    });
+Room.prototype.factoryController = function() {
+  const roomGlobal = global.rooms[this.name];
+  return roomGlobal && roomGlobal.factoryController;
+}
 
-    if (haulers && haulers.length) {
-      this.haulers = haulers;
-    }
+Room.prototype.taskController = function() {
+  const roomGlobal = global.rooms[this.name];
+  return roomGlobal && roomGlobal.taskController;
+}
+
+Room.prototype.resourceAmount = function(resource = 'energy') {
+  let total = 0;
+  if (this.storage) {
+    total = total + this.storage.store[resource];  
   }
 
-  run() {
-    if (Array.isArray(this.haulers)) {
-      this.haulers.forEach((hauler) => {
-        // find dropped Resources nearest the Source
-        const source = Game.getObjectById(hauler.memory.source);
+  if (this.terminal) {
+    total = total + this.terminal.store[resource];  
+  }
+  return total;
+}
 
-        if (hauler.memory.task === 'load' || hauler.memory.task === 'pickup') {
-          const droppedResources = source.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
+global.hasKeys = function(obj) {
+  for (const key in obj) {
+    return true; // Returns true immediately upon finding the first key
+  }
+  return false;
+}
 
-          if (droppedResources) {
-            // targets the dropped resources closest to the deposit
-            hauler.memory.target = droppedResources.id;
+global.tools = {
+  viewCpu(func, label = 'cpu') {
+    let cpu = Game.cpu.getUsed();
+    const res = func && func()
+    cpu = Game.cpu.getUsed() - cpu;
+    console.log(label, cpu.toFixed(4));
+    return res;
+  },
+  createDrone(job, body, memory) {
+    const hive = GameMap.findNearestHive(room);
+    return hive.spawnController.createDrone(job, body, memory);
+  },
+  createTargetMiner(room, source) {
+    const hive = GameMap.findNearestHive(room);
+    const body = [...m10, ...m10, ...w10, ...w10, CARRY, MOVE, MOVE, MOVE, MOVE];
+    return hive.spawnController.createDrone('hauler', body, { targetRoom: room, source });
+  },
+  createTargetHauler(room, source) {
+    const hive = GameMap.findNearestHive(room);
+    const body = [...m10c10, ...m5c5, ...m10c10];
+    return hive.spawnController.createDrone('hauler', body, { targetRoom: room, source });
+  },
+  createBankTank(room, powerBank) {
+    const hive = GameMap.findNearestHive(room);
+    const body = [...m10, ...m10, ...m5, ...ra10, ...ra5, ...h10];
+    return hive.spawnController.createDrone('bankTank', body, { targetRoom: room, powerBank });
+  },
+  createPowerHauler(room, powerBank) {
+    const hive = GameMap.findNearestHive(room);
+    const body = [...m10c10, ...m5c5, ...m10c10];
+    return hive.spawnController.createDrone('power-hauler', body, { targetRoom: room, powerBank });
+  },
+  inventory: function() {
+    const inventory = {};
+
+    for (const roomName in global.hives) {
+      const hive = global.hives[roomName];
+
+      if (hive) {
+        const storage = hive.storage;
+        const terminal = hive.terminal;
+        for (const resource of RESOURCES_ALL) {
+          let count = inventory[resource] || 0;
+
+          if (storage) {
+            count = count + storage.store.getUsedCapacity(resource); 
           }
-        } else if (hauler.memory.task === 'unload') {
-          // add special target rules
+          if (terminal) {
+            count = count + terminal.store.getUsedCapacity(resource); 
+          }
+          if (count > 0) {
+            inventory[resource] = count;
+          }
         }
-      });
+      }
     }
-  }
+
+    Memory.inventory = inventory;
+  },
 }
 
 module.exports = utils;

@@ -61,6 +61,9 @@ class LabController {
 		room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_LAB } }).forEach(lab => {
 			if (lab.cooldown === OK && (!labMem[lab.id] || !labMem[lab.id].task)) {
 				idleLab = lab;
+
+				// I could set the mode to unboost here.
+				if (!labMem[lab.id]) labMem[lab.id] = {};
 				idleLab.memory = labMem[lab.id];
 			}
 		});
@@ -126,6 +129,26 @@ class LabController {
 		return _.pickBy(this.labs, lab => !(lab.task || lab.mode));
 	}
 
+	getOperableLab() {
+		const mem = this.room.memory['labController'] || {}
+
+		if (mem.labs) {
+			for (const labId of mem.labs) {
+				// const lab = Game.getObjectById(labId);
+				// if (lab && lab.)
+			}
+		}
+		// this.labs.forEach(lab => {
+		// 	if (lab && lab.cooldown === OK && !mem[lab.id].task) {
+		// 		return lab.unboostCreep(creep);
+		// 	}
+		// });
+		// search for a lab that should be boosted.
+		// start with just X labs
+		// Ideally it has operated reecently
+		return null;
+	}
+
 	setJob(action, resource, amount = null) {
 		this.set('job', { action, resource, amount, status: 'starting' });
 		// a job could have a subtask
@@ -144,6 +167,10 @@ class LabController {
 		return drones.length > 0 ? new global.Drone(drones[0]) : null;
 	}
 
+	boostCreep(creep) {
+
+	}
+
 	unboostCreep(creep) {
 		const mem = this.get('labs');
 
@@ -158,12 +185,12 @@ class LabController {
 
 	loadLab(lab, resource, amount) {
 		const task = this.taskController.createTransferTask(resource, this.storage, lab);
-  		return this.taskController.issueTask(task, '➕⚗️');
+		return this.taskController.issueTask(task, '➕⚗️');
 	}
 
 	unloadLab(lab) {
 		const task = this.taskController.createTransferTask(lab.mineralType, lab, this.storage);
-    	return this.taskController.issueTask(task, '➖⚗️');
+  	return this.taskController.issueTask(task, '➖⚗️');
 	}
 
 	unloadLabs() {
@@ -303,37 +330,30 @@ class LabController {
 	manageStore(lab, mem) {
 		const resourceAmount = lab.store[mem.resource];
 		const amount = mem.fillAmount ? Number(mem.fillAmount) : mem.mode === 'load' ? 50 : 1000;
-		const drone = mem.drone && Game.getObjectById(mem.drone);
 
-		// console.log(lab, mem.resource, amount, drone);
-
-		if (drone && drone.memory.taskQueue && drone.memory.taskQueue.length > 0) {
-			return; // the drone is probably working on my task
-		} else if (drone && drone.memory.task === 'standby') {
-			mem.drone = undefined;
-		}
-
-		if (mem.mode === 'load') {
-			const resourceAvailable = this.storage.store.getUsedCapacity(mem.resource) >= LAB_REACTION_AMOUNT;
-			if (!drone) {
+		if (!mem.storeTask) {
+			mem.nextManageStore = Game.time + 125;
+			if (mem.mode === 'load') {
+				const resourceAvailable = this.storage.store.getUsedCapacity(mem.resource) >= LAB_REACTION_AMOUNT;
 				if (lab.mineralType && lab.mineralType !== mem.resource) {
-					console.log('unloading', lab, lab.mineralType);
-					mem.drone = this.unloadLab(lab);
-				} else  if (resourceAvailable && resourceAmount < amount) {
-					console.log('loading', lab, mem.resource);
-					mem.drone = this.loadLab(lab, mem.resource);
+					// console.log('unloading', lab, lab.mineralType);
+					mem.storeTask = this.taskController.createTransferTask(lab.mineralType, lab, this.storage);
+				} else if (resourceAvailable && resourceAmount < amount) {
+					// console.log('loading', lab, mem.resource);
+					mem.storeTask = this.taskController.createTransferTask(mem.resource, this.storage, lab);
+				} else {
+					mem.nextManageStore = Game.time + 256;
 				}
-			} else if (drone && resourceAmount >= amount) {
-				mem.drone = undefined;
+			} else if (mem.mode === 'unload') {
+				if ((resourceAmount > amount || lab.mineralType && lab.mineralType !== mem.resource)) {
+					mem.storeTask = this.taskController.createTransferTask(lab.mineralType, lab, this.storage);
+				}
+			} else if (!mem.resource && lab.mineralType && lab.store[lab.mineralType] > 0) {
+				// console.log('unloading', lab, lab.mineralType);
+				mem.storeTask = this.taskController.createTransferTask(lab.mineralType, lab, this.storage);
+			} else {
+				mem.nextManageStore = Game.time + 256;
 			}
-		} else if (mem.mode === 'unload') {
-			if (!drone && (resourceAmount > amount || lab.mineralType && lab.mineralType !== mem.resource)) {
-				mem.drone = this.unloadLab(lab);
-			} else if (drone && resourceAmount <= amount) {
-				mem.drone = undefined;
-			}
-		} else if (!mem.resource && lab.mineralType && lab.store[lab.mineralType] > 0) {
-			mem.drone = this.unloadLab(lab);
 		}
 	}
 
@@ -342,24 +362,30 @@ class LabController {
 		const [resource1, resource2] = LabController.getResourceComponents(resource);
 		const lab1 = lab1Id && Game.getObjectById(lab1Id);
 		const lab2 = lab2Id && Game.getObjectById(lab2Id);
+		let status;
 
 		switch (task) {
 			case 'run':
-				const lab1Ready = lab1 && lab1.store.getUsedCapacity(resource1) >= LAB_REACTION_AMOUNT;
-				const lab2Ready = lab2 && lab2.store.getUsedCapacity(resource2) >= LAB_REACTION_AMOUNT;
+				const lab1Resources = lab1 ? lab1.store.getUsedCapacity(resource1) : 0;
+				const lab2Resources = lab1 ? lab2.store.getUsedCapacity(resource2) : 0;
+				const lab1Ready = lab1Resources >= LAB_REACTION_AMOUNT;
+				const lab2Ready = lab2Resources >= LAB_REACTION_AMOUNT;
+
 
 				// limit
 				if (limit && this.storage.store[resource] >= limit) {
-					console.log('limit skip');
+					// console.log('limit skip');
 					break;
 				}
 
-				if (lab.cooldown === OK && lab1Ready && lab2Ready) {
-					const status = lab.runReaction(lab1, lab2);
+				if (lab.cooldown === OK && lab1Ready && lab2Ready && lab.store.getFreeCapacity(resource) >= LAB_REACTION_AMOUNT) {
+					status = lab.runReaction(lab1, lab2);
 					if (job) job.status = 'running';
 
 					if (status === OK) {
 						// updates the job amount
+						
+
 						if (job && typeof job.amount === 'number') {
 							job.amount = job.amount - LAB_REACTION_AMOUNT;
 							if (job.amount < 0) {
@@ -381,7 +407,7 @@ class LabController {
 				const labReady = lab.store.getUsedCapacity(resource) >= LAB_REACTION_AMOUNT;
 
 				if (lab.cooldown === OK && labReady) {
-					const status = lab.reverseReaction(lab1, lab2);
+					status = lab.reverseReaction(lab1, lab2);
 					if (job) job.status = 'running';
 
 					if (status === OK) {
@@ -402,23 +428,23 @@ class LabController {
 			case 'boost':
 				targetCreep = typeof targetCreep === 'string' && Game.creeps[targetCreep];
 				if (targetCreep && lab.cooldown === OK && lab.store.getUsedCapacity(resource) >= LAB_REACTION_AMOUNT) {
-					const status = lab.boostCreep(targetCreep);
+					// this.boostCreep(targetCreep, resource);
+					status = lab.boostCreep(targetCreep);
 
 					if (status === OK) {
-						// I cam probably move the logic here, but it stays where it is at for now
+						// creep was boosted successfully.
+						// if (targetCreep.body.reduce((acc, part) => part.type === WORK && part.boost ? true : acc, false)) {
+						targetCreep.memory.boosted = lab.id; // records the lab to return resources
+						targetCreep.memory.target = null;
+						targetCreep.memory.task = 'standby';
+						break;
+						// }
 					} else if (status === ERR_NOT_ENOUGH_RESOURCES) {
 						targetCreep.memory.target = null;
 						targetCreep.memory.task = 'standby';
 					} else if (status === ERR_NOT_FOUND || status === ERR_INVALID_TARGET) {
 						targetCreep.memory.target = null;
 						targetCreep.memory.task = 'standby';
-					}
-
-					// creep was boosted successfully.
-					if (targetCreep.body.reduce((acc, part) => part.type === WORK && part.boost ? true : acc, false)) {
-						targetCreep.memory.target = null;
-						targetCreep.memory.task = 'standby';
-						break;
 					}
 				}
 				break;
@@ -428,10 +454,13 @@ class LabController {
 			// temporarily negates changes to the job from non primary tasks
 			this.set('job', job);
 		}
+
+		return status;
 	}
 
 	processLabs() {
 		const labs = this.get('labs') || {};
+		// NOTE: if a lab is not in memory, it can not deboost creeps
 
 		// if there is an upgrader, try to boost it.
 		let upgrader = null;
@@ -446,14 +475,20 @@ class LabController {
 		}
 
 		if (!this.room.memory.labEnergy) this.room.memory.labEnergy = {};
-		Object.keys(labs).forEach(labId => {
-			const lab = Game.getObjectById(labId);
-			const mem = labs[lab.id];
-			if (lab.store.getFreeCapacity('energy') >= 1000) this.room.memory.labEnergy[labId] = lab.store.getFreeCapacity('energy');
+		Object.keys(labs).forEach(labId => {		
+			const mem = labs[labId];
+			if (mem && (mem.nextRun || 0) <= Game.time) {
+				const lab = Game.getObjectById(labId);
+				if (!lab) return;
 
-			if (lab && mem) {
-				// update to use a manageStore function
-				if (this.hive.taskController && Game.time % 10 === OK) this.manageStore(lab, mem);
+				if (lab.store.getFreeCapacity('energy') >= 1000) {
+					this.room.memory.labEnergy[labId] = lab.store.getFreeCapacity('energy');
+				}
+
+				if (this.hive.taskController && !mem.storeTask && (mem.nextManageStore || 0) <= Game.time) {
+					// instead of issueing tasks, I need the labs to announce they have needs
+					this.manageStore(lab, mem);
+				}
 
 				if (mem.target) {
 					const targetCreep = Game.creeps[mem.target];
@@ -483,104 +518,22 @@ class LabController {
 				}
 
 				if (mem.task) {
-					this.processTask(lab, mem);
+					if (lab.cooldown === OK) {
+						this.processTask(lab, mem);
+					} else {
+						mem.nextRun = Game.time + lab.cooldown;
+					}
 				}
 
 				labs[lab.id] = mem;
 			}
 		});
-
 		this.set('labs', labs);
 	}
 
 	run() {
 		try {
 			this.processLabs();
-
-			let job = this.get('job');
-
-			if (!job) {
-				// if (Game.time % 25 === OK && this.room.controller.level === 6) {
-				// 	job = this.getNextJob();
-				// 	if (job) this.set('job', job);
-				// }
-				// return;
-			}
-
-			if (job) {
-				const resourceAvailable = this.storage.store.getUsedCapacity(job.resource);
-				switch (job.action) {
-					case 'run':
-						const [resource1, resource2] = LabController.getResourceComponents(job.resource);
-						const resource1Available = this.storage.store.getUsedCapacity(resource1);
-						const resource2Available = this.storage.store.getUsedCapacity(resource2);
-
-						if (!job.status || (job.status === 'starting' || job.status === 'loading')) {
-							// validate the job inputs.
-							if (resource1Available && resource2Available)	 {
-								job.status = 'loading';
-
-								this.reserveLab(this.lab1.id, { mode: 'load', resource: resource1 });
-								this.reserveLab(this.lab2.id, { mode: 'load', resource: resource2 });
-								this.reserveLab(this.lab0.id, {
-									task: 'run',
-									mode: 'unload',
-									resource: job.resource,
-									lab1: this.lab1.id,
-									lab2: this.lab2.id,
-									fillAmount: 1500,
-								});
-							} else {
-								// invalid job
-								job.status = 'unloading';
-								this.clearReservations([this.lab0.id, this.lab1.id, this.lab2.id]);
-								break;
-							}
-						}
-						break;
-
-					case 'reverse':
-						if (job.status === 'starting') {
-							// validate the job inputs.
-							if (resourceAvailable)	 {
-								job.status = 'loading';
-								this.reserveLab(this.lab1.id, { mode: 'unload' });
-								this.reserveLab(this.lab2.id, { mode: 'unload' });
-								this.reserveLab(this.lab0.id, {
-									task: 'reverse',
-									mode: 'load',
-									resource: job.resource,
-									lab1: this.lab1.id,
-									lab2: this.lab2.id,
-								});
-							} else {
-								// invalid job
-								this.set('job', null);
-								break;
-							}
-						}
-						break;
-
-					case 'boost':
-						// new logic for boosting creeps from a job is necessary
-						break;
-
-					case 'cleanup':
-						const labsEmpty = this.unloadLabs();
-						if (labsEmpty) job = this.getNextJob();
-						break;
-
-					default:
-						break;
-				}
-
-				if (job && job.status === 'unloading') {
-					const labsEmpty = this.unloadLabs();
-					if (labsEmpty) job = this.getNextJob();
-				}
-				this.set('job', job);
-			}
-
 		} catch (e) {
 			console.log(this.room.name, 'lab-oopsy', e.toString());
 		}

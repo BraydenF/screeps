@@ -20,7 +20,6 @@ class TaskController {
 
       this.room = room;
       this.spawn = spawns.length && spawns[0];
-      this.tasks = new global.Queue(room.memory.tasks || []);
     } else {
       throw 'TaskController';
     }
@@ -29,7 +28,6 @@ class TaskController {
   refresh(hive) {
     this.room = hive.room;
     this.spawn = hive.spawn;
-    this.tasks = this.room.memory.tasks || [];
   }
 
   get(key) {
@@ -38,31 +36,6 @@ class TaskController {
 
   set(key, value) {
     this.room.memory[key] = value;
-  }
-
-  addTask(task) {
-    if (typeof task !== 'string') task = JSON.stringify(task);
-    this.tasks.push(task);
-  }
-
-  publishTask (task) {
-    if (typeof task !== 'string') task = JSON.stringify(task);
-
-    if (!this.tasks.includes(task)) {
-      this.tasks.push(task);
-    }
-  }
-
-  getTask() {
-    let task = this.tasks.shift();
-    if (typeof task === 'string') task = JSON.parse(task);
-    return task;
-  }
-
-  peekTasks() {
-    let task = this.tasks.peek();
-    if (typeof task === 'string') task = JSON.parse(task);
-    return task;
   }
 
   getFreeDrone() {
@@ -77,13 +50,68 @@ class TaskController {
     return drones.length > 0 ? new global.Drone(drones[0]) : null;
   }
 
+  getMaintenanceTask(drone) {
+    let buildTargets = this.getBuildTargets(this.room);
+    if (buildTargets.length > 0) {
+      return { task: 'build', target: buildTargets[0].id };
+    }
+
+    const repairTargets = this.getRepairTargets();
+    if (repairTargets && repairTargets.length > 0) {
+      const nearest = Game.cpu.bucket >= 5100 && drone
+        ? drone.creep.pos.findClosestByPath(repairTargets.slice(0, 3))
+        : repairTargets[0];
+      if (nearest) return { task: 'repair', target: nearest };
+    }
+  }
+
+  getBuildTargets() {
+    const mem = this.room.memory;
+    return mem['build-targets'] ? mem['build-targets'].reduce((acc, id) => {
+      const target = Game.getObjectById(id);
+      if (target) {
+        acc.push(target);
+      } else {
+        this.room.memory['build-targets'][id] = undefined;
+      }
+      return acc;
+    }, []) : [];
+  }
+
+  getRepairTargets() {
+    let repairTargets = this.room.find(FIND_STRUCTURES, { filter: (struct) => {
+      const minimumDamage = (struct.hitsMax - struct.hits) >= 1000; // max heal is 800
+      if (!minimumDamage) return false;
+      switch(struct.structureType) {
+        case STRUCTURE_CONTAINER:
+          return struct.hits < 175000;
+        case STRUCTURE_ROAD:
+          return struct.hits > 5000 && struct.hits < 550000;
+        case STRUCTURE_WALL:
+        case STRUCTURE_RAMPART:
+          return struct.hits <= 12000000;
+      }
+    }}).sort((a, b) => a.hits - b.hits);
+    return repairTargets;
+  }
+
   findNearestEnergy(drone) {
     // the Drone is passed to assist in finding the closest appropriate energy source for his work
   }
 
+  getResourceUnloadTarget(resource) {
+    // if the terminal needs the resource it goes there first
+    const requestedResources = this.room.memory.terminal && this.room.memory.terminal.requestedResources || {};
+    if (room.terminal && this.room.terminal.store[resource] <= requestedResources[resource]) {
+      return this.room.terminal;
+    } else {
+      return this.room.storage;
+    }
+  }
+
   // if i stringify tasks would that be better?
   createLoadTask(target, resource = RESOURCE_ENERGY, amount = null) {
-    return { name: 'load', target: target.id, resource, amount: amount || target.store.getFreeCapacity(resource) };
+    return { name: 'load', target: target.id, resource, amount: amount };
   }
 
   createUnloadTask(target, resource = RESOURCE_ENERGY, amount = null) {
@@ -96,7 +124,7 @@ class TaskController {
     return [loadTask, unloadTask];
   }
 
-  issueTask(task, message = 'task accepted') {
+  issueTask(task, message) {
     const drone = this.getFreeDrone();
     if (drone) {
       if (drone.creep.store.getUsedCapacity('energy') >= 0) task = [this.createUnloadTask(this.room.storage, 'energy'), ...task];
@@ -105,6 +133,19 @@ class TaskController {
       return drone.creep.name;
     }
     return false;
+  }
+
+  getLabTask() {
+    const labsMem = this.room.memory.labController && this.room.memory.labController.labs;
+    if (labsMem) {
+      for (const id in labsMem) {
+        let task = labsMem[id].storeTask;
+        if (task) {
+          labsMem[id].storeTask = null;
+          return task;
+        }
+      }
+    }
   }
 
   getTaskAssignment(drone) {
@@ -143,6 +184,71 @@ class TaskController {
     };
 
     // tasks.towers.
+  }
+
+  getEnergySource(target) {
+    // find the closest source of energy to the target
+    // mainLink, sourceContainers, sourceLinks, droppedResources
+  }
+
+  getRoomMaintenanceTask() {
+    const room = this.creep.room;
+    const memory = room.memory;
+            // how can I best prevent this search with out adding it to too many ticks
+
+      // Ideally I am 
+    // if (room.memory.mode === 'power') {
+    //   // prioritize getting energy to the
+    // } else {
+
+    // }
+
+    // if I am in power mode I want to give energy to the
+    // const goo = room.energyCapacityAvailable - room.energyAvailable;
+    let extensionOrSpawn;
+    if (room.energyCapacityAvailable - room.energyAvailable > 0) {
+      extensionOrSpawn = room.find(FIND_STRUCTURES, {
+        filter: (structure) => (structure.structureType == STRUCTURE_SPAWN && structure.store.getFreeCapacity(RESOURCE_ENERGY) >= 50)
+          || (structure.structureType === STRUCTURE_EXTENSION && structure.store.getFreeCapacity(RESOURCE_ENERGY) > 0)
+      });
+      if (extensionOrSpawn) return extensionOrSpawn;
+    }
+
+    // if there are enemies this needs to be the highest priotity
+    let nearestTower;
+    if (memory.tEnergy) {
+      const lowEnergyTowers = Object.keys(memory.tEnergy).map(id => Game.getObjectById(id));
+      // nearestTower = lowEnergyTowers.length > 0 ? this.creep.pos.findClosestByRange(lowEnergyTowers) : null;
+      // if (nearestTower) return nearestTower; 
+    }
+
+    // extensionOrSpawn
+    // nearestTower, lowEnergyTowers[0]
+    // if (hostilesDetected -> towers, mode===power -> extensions)
+    // is it always extensions by default? or towers?
+    // if (extensionOrSpawn || lowEnergyTowers.length > 0) {
+
+    // }
+
+    if (memory.labEnergy) {
+      const lowEnergyLab = Object.keys(memory.labEnergy).first();
+      if (lowEnergyLab) {
+        return lowEnergyLab;
+      }
+    }
+
+    const terminal = this.creep.room.terminal;
+    // todo: update to the requestedResources amount
+    if (terminal && terminal.store.getUsedCapacity(RESOURCE_ENERGY) < 10000) {
+      return terminal;
+    }
+
+    const factory = memory.factory && Game.getObjectById(memory.factory.id);
+    if (factory && factory.store.getUsedCapacity(RESOURCE_ENERGY) < 10000) {
+      return factory;
+    }
+
+    // todo: power spawn needs energy
   }
 
   getHaulerTask() {

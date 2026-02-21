@@ -37,7 +37,7 @@
   * GO - { type: ORDER_BUY, resourceType: 'GO', price: 55, totalAmount: 10000, roomName: 'W2N54' }
   * 
   * O - { type: ORDER_BUY, resourceType: 'O', price: 16.5, totalAmount: 10000, roomName: 'E7N51' }
-  * oxidant - { type: ORDER_BUY, resourceType: 'oxidant', price: 99.13, totalAmount: 10000, roomName: 'E7N51' }
+  * oxidant - { type: ORDER_BUY, resourceType: 'oxidant', price: 184.13, totalAmount: 10000, roomName: 'E7N51' }
   * Z - { type: ORDER_BUY, resourceType: 'Z', price: 2.625, totalAmount: 10000, roomName: 'W8N53' }
   * UL - { type: ORDER_BUY, resourceType: 'UL', price: 85, totalAmount: 10000, roomName: 'W8N53' }
   * G - { type: ORDER_BUY, resourceType: 'G', price: 200, totalAmount: 10000, roomName: 'W2N54' }
@@ -52,15 +52,34 @@
 const marketConfig = {
   concentrate: { minPrice: 300000 },
   switch: { minPrice: 100000 },
-  battery: { minPrice: 155.009, maxPrice: 200, minStock: 100000, sellOrderPrice: 181.275 }, // 154
-  utrium_bar: { minStock: 100000, sellOrderPrice: 390.553 },
-  lemergium_bar: { minStock: 65000, sellOrderPrice: 889.553 },
+  battery: { minPrice: 155.009, maxPrice: 200, minStock: 100000, sellOrderPrice: 283.275 }, // 154
+  utrium_bar: { minStock: 100000, sellOrderPrice: 327.553 },
+  lemergium_bar: { minStock: 65000, sellOrderPrice: 947.553 },
  	// U: { minPrice: 5, maxPrice: 28.625 },
  	// keanium_bar: { minPrice: 180, maxPrice: 250 },
  	// wire: { minPrice: 7000, maxPrice: 10000 },
   // condensate: { minPrice: 25000, maxPrice: 27000 },
-  reductant: { minPrice: 550.250, maxPrice: 460, minStock: 100000, sellOrderPrice: 550.735 },
+  reductant: { minPrice: 550.250, maxPrice: 460, minStock: 100000, sellOrderPrice: 563.735 },
 }
+
+/**
+ * Memory.marketConfig = {
+ *  [resource]: { minPrice: 155.009, maxPrice: 200, minStock: 100000, sellOrderPrice: 283.275 }
+ * }
+ */
+
+// I should store my prices in memory and adjust them daily.
+// Game.market.getHistory([resourceType])
+/**[{
+    "resourceType": "L",
+    "date": "2019-06-24",
+    "transactions": 4,
+    "volume": 400,
+    "avgPrice": 3.63,
+    "stddevPrice": 0.27
+  }].sort(a, b)
+ */
+// if the average is higher than my price, I should increase a little bit.
 
 class MarketController {
   static createSellOrder(roomName, resource, amount, price) {
@@ -157,6 +176,70 @@ class MarketController {
     }
   }
 
+  static adjustPrices() {
+    const marketConfig = Memory.marketConfig;
+    if (marketConfig) {
+      for (let resource in marketConfig) {
+        if (!marketConfig[resource].sellOrderPrice) {
+          console.log(`No sellPrice for ${resource}`);
+          continue;
+        }
+
+        const history = Game.market.getHistory(resource);
+        if (!history || history.length === 0) {
+          console.log(`No history for ${resource}`);
+          continue;
+        }
+
+        // Sort history by date descending (newest first), just in case
+        const sortedHistory = history.sort((a, b) => b.date.localeCompare(a.date));
+
+        // Use last 7 days (or fewer if not available)
+        const daysToUse = Math.min(7, sortedHistory.length);
+        let totalValue = 0;
+        let totalVolume = 0;
+
+        for (let i = 0; i < daysToUse; i++) {
+          const day = sortedHistory[i];
+          totalValue += day.avgPrice * day.volume;
+          totalVolume += day.volume;
+        }
+
+        if (totalVolume === 0) {
+          console.log(`No volume in recent history for ${resource}`);
+          continue;
+        }
+
+        // I HAVE NO ORDER
+        // MY PRICE IS MORE THAN 10% LESS THAN THE AVERAGE PRICE
+        // SET A NEW PRICE
+
+
+        // Volume-weighted average price (VWAP)
+        const vwap = totalValue / totalVolume;
+
+        // Update fields with slight adjustments:
+        // - sellOrderPrice: slightly under VWAP to sell competitively
+        // - minPrice: under VWAP for buying threshold
+        // - maxPrice: slightly over VWAP for selling cap or buying max
+        // Adjust multipliers as needed for each resource (e.g., more aggressive undercutting)
+        const sellFactor = 0.98;  // 2% under to undercut
+        const minFactor = 0.95;   // 5% under for buy min
+        const maxFactor = 1.02;   // 2% over for sell max or buy max
+
+        if (marketConfig[resource].sellOrderPrice !== undefined) {
+          marketConfig[resource].sellOrderPrice = Math.round(vwap * sellFactor * 1000) / 1000;
+        }
+        // if (marketConfig[resource].minPrice !== undefined) {
+        //   marketConfig[resource].minPrice = Math.round(vwap * minFactor * 1000) / 1000;
+        // }
+        // if (marketConfig[resource].maxPrice !== undefined) {
+        //   marketConfig[resource].maxPrice = Math.round(vwap * maxFactor * 1000) / 1000;
+        // }
+      }
+    }
+  }
+
   constructor(room) {
   	this.room = room;
     this.storage = this.room.storage;
@@ -173,7 +256,7 @@ class MarketController {
   }
 
   getConfig(resource) {
-  	return marketConfig[resource];
+  	return (Memory.marketConfig || marketConfig)[resource];
   }
 
   getRequestedAmount(resource) {

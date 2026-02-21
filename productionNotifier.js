@@ -77,7 +77,7 @@ const productionNotifier = {
   },
 
   run () {
-    if (Game.time % 10 === OK && productionNotifier.shouldSendNotification()) {
+    if (Game.time % 3333 === OK && productionNotifier.shouldSendNotification()) {
       productionNotifier.sendDailyNotification();
     }
   },
