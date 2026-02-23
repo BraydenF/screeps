@@ -30,6 +30,10 @@ class BaseCreep {
     return Game.creeps[this.name];
   }
 
+  get pos() {
+    return this.creep.pos;
+  }
+
   get taskQueue() {
     return this.get('taskQueue') || [];
   }
@@ -299,14 +303,22 @@ class BaseCreep {
 
   moveToRoom(roomName) {
     if (this.creep.fatigue > 0) return ERR_TIRED;
-    const route = GameMap.findRoute(this.creep.room.name, roomName);
+    const currentRoom = this.creep.room.name;
+    const route = GameMap.findRoute(currentRoom, roomName);
     if (route.length > 0) {
       // const mem = this.creep.memory;
       // const moveTo = Game.getObjectById(mem.target || mem.source || mem.powerBank);
       // if (route.length === 1 && moveTo) {
       //   this.creep.moveTo(moveTo, config.moveToOpts);
       // } else {
-        const exitPos = this.creep.pos.findClosestByRange(route[0].exit);
+        let exitPos = this.get('_exitPos');
+        if (exitPos && exitPos.roomName === currentRoom) {
+          exitPos = new RoomPosition(exitPos.x, exitPos.y, exitPos.roomName);
+        } else {
+          exitPos = this.creep.pos.findClosestByPath(route[0].exit);
+          if (exitPos) this.set('_exitPos', exitPos);
+        }
+
         if (exitPos) {
           return this.creep.moveTo(exitPos, { ...config.moveToOpts, reusePath: 50 });
         }
@@ -945,6 +957,7 @@ class BaseCreep {
           if (resource && resource !== 'energy' && !target) {
             target = this.getStorage();
           } else if (!target) {
+            // if I am not home, I need to go home
             // how can I best prevent this search with out adding it to too many ticks
 
             // const spawns = global.rooms[this.room.name] && global.rooms[this.room.name].spawns;

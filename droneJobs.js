@@ -1,5 +1,27 @@
 const lootPrio = ['power', 'X', 'LO', 'GO', 'KO', 'ZH', 'battery', 'O', 'H', 'L', 'U', 'K', 'Z', 'energy'];
 
+function pickupSalvage(drone, desiredResource) {
+	if ((drone.get('_nextSalvageSearch') || 0) <= Game.time) {
+	  const salvage = drone.creep.pos.findClosestByPath(FIND_TOMBSTONES, {
+	    filter: tombstone => tombstone.store.getUsedCapacity(desiredResource) > 0,
+	  });
+	  if (salvage) {
+	    let capacity = drone.getFreeCapacity();
+	    for (const r in salvage.store) {
+	      if (salvage.store[r] < capacity && (!desiredResource || desiredResource && r == desiredResource)) {
+	        capacity = capacity - salvage.store[r];
+	        drone.pushTask({ name: 'load', target: salvage.id, resource: r });
+	      }
+	    }
+	    return OK;
+	  }
+
+	  drone.set('_nextSalvageSearch', Game.time + 69);
+	  return ERR_NOT_FOUND;
+	}
+	return ERR_TIRED;
+}
+
 function servicePowerSpawn(drone) {
 	const room = drone.creep.room;
   const powerSpawn = Game.getObjectById(room.memory.powerSpawn.id);
@@ -395,6 +417,7 @@ const jobs = {
       // I do not have energy
       if (source && (source.energy > 0 || source.mineralAmount > 0) && drone.canHarvest(source.depositType || source.mineralType)) {
         if (!travelTime) drone.set('travelTime', 1500 - drone.creep.ticksToLive);
+        if (container && (drone.creep.pos.lookFor(LOOK_STRUCTURES) || {}).id !== container.id) drone.moveTo(container);
         drone.setTask('harvest', source.id, '🔄 harvest');
       } else if (source && source.mineralAmount === 0 && source.ticksToRegeneration >= drone.creep.ticksToLive) {
         drone.setTask('reclaim');
@@ -557,25 +580,17 @@ const jobs = {
         if (source && freeCapacity > 0) {
           const container = drone.get('container');
           if (container) {
-            drone.setTask('load', container);
+            return drone.setTask('load', container);
+          } else if (drone.get('_nextDropSearch') || 0 <= Game.time) {
+          	const droppedResources = source.pos.findInRange(FIND_DROPPED_RESOURCES, 2);
+          	if (droppedResources.length > 0) {
+          		return drone.setTask('pickup', droppedResources[0].id);
+          	} else {
+          		drone.set('_nextDropSearch', Game.time + 11);
+          	}
           }
 
-          if ((drone.get('_nextSalvageSearch') || 0) <= Game.time) {
-	          const salvage = drone.creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-	            filter: tombstone => tombstone.store.getUsedCapacity(source.depositType) > 0,
-	          });
-	          if (salvage) {
-	            let capacity = freeCapacity;
-	            for (const resource in salvage.store) {
-	              if (salvage.store[resource] < capacity) {
-	                capacity = capacity - salvage.store[resource];
-	                drone.pushTask({ name: 'load', target: salvage.id, resource: resource });
-	              }
-	            }
-	            return;
-	          }
-	          drone.set('_nextSalvageSearch', Game.time + 69);
-	        }
+          if (pickupSalvage(drone, source.depositType) === OK) return;
 
           if (!drone.creep.pos.inRangeTo(source, 2)) {
           	drone.moveTo(source);
@@ -675,27 +690,7 @@ const jobs = {
       }
 
       // all haulers search
-      if (!room.memory.encounter && (drone.get('_nextSalvageSearch') || 0) <= Game.time) {
-        const salvage = drone.creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-          filter: salvage => salvage.store.getUsedCapacity() > 0,
-        });
-
-        if (salvage) {
-          let capacity = freeCapacity;
-          for (const resource in salvage.store) {
-            if (salvage.store[resource] < capacity) {
-              capacity = capacity - salvage.store[resource];
-              drone.pushTask({ name: 'load', target: salvage.id, resource: resource });
-            }
-          }
-
-          let targetStore = storage;
-          if (targetStore) drone.pushTask({ name: 'unload', target: targetStore.id });
-          return;
-        } else {
-        	drone.set('_nextSalvageSearch', Game.time + 69);
-        }
-      }
+      if (pickupSalvage(drone) === OK) return;
 
       if ((drone.get('_nextRuinSearch') || 0) <= Game.time) {
         const ruin = drone.creep.pos.findClosestByPath(FIND_RUINS, {
@@ -763,7 +758,7 @@ const jobs = {
         })();
 
         if (drone.canHarvest()) {
-          if (!container && drone.creep.pos.findInRange(FIND_DROPPED_RESOURCES, 1).first()) {
+          if (!container && drone.creep.pos.findInRange(FIND_DROPPED_RESOURCES, 2).first()) {
             drone.setTask('pickup');
             return;
           }
@@ -827,21 +822,27 @@ const jobs = {
         // default minimum tends to be 25k
         if (terminal && terminal.store.getUsedCapacity(RESOURCE_ENERGY) >= 25000) {
           drone.setTask('load', terminal.id);
-        } else if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 10000) {
+        } else if (storage && storage.store.getUsedCapacity(RESOURCE_ENERGY) > 5000) {
           drone.setTask('load', storage.id);
         } else {
-          const container = drone.getEnergizedContainer(drone.getFreeCapacity());
-          if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > drone.creep.store.getFreeCapacity(RESOURCE_ENERGY)) {
+        	const freeCapacity = drone.getFreeCapacity();
+          const container = drone.getEnergizedContainer(freeCapacity);
+          if (container && container.store.getUsedCapacity(RESOURCE_ENERGY) > freeCapacity) {
             return drone.setTask('load', container.id);
           }
 
-          if ((drone.get('_nextHostileSearch') || 0) <= Game.time) {
+          if ((drone.get('_nextDropSearch') || 0) <= Game.time) {
 	          const droppedResources = drone.creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES);
 	          if (droppedResources) {
 	            return drone.setTask('pickup');
 	          } else {
-	          	drone.set('_nextHostileSearch', Game.time + 11);
+	          	drone.set('_nextDropSearch', Game.time + 11);
 	          }
+	        }
+
+					const upgradeContainer = drone.room.memory.upgradeContainer && Game.getObjectById(drone.room.memory.upgradeContainer);
+	        if (!storage && upgradeContainer && upgradeContainer.store['energy'] >= freeCapacity) {
+	        	return drone.setTask('load', upgradeContainer.id);
 	        }
         }
       } else {

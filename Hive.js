@@ -238,8 +238,7 @@ class Hive {
   }
 
   manageControllerLevel() {
-    if (Game.time % 50 !== OK) return;
-    let cpu = Game.cpu.getUsed();
+    if (this.get('_nextManageController') > Game.time) return;
 
     // this is probably a bit CPU hit..
     const upgraders = this.room.find(FIND_MY_CREEPS, { filter: { memory: { job: 'upgrader' } } });
@@ -262,15 +261,11 @@ class Hive {
       if (sourceIds.length === 1) {
         upgraderNeedsReplaced = upgraders.length === 0;
       } else if (this.controller.level === 8) {
-        // todo: update the rate based on energy storage
-        if (false) {
-          upgraderNeedsReplaced = upgraders.length === 0 || (upgraders.length === 1 ? upgraders[0] && upgraders[0].ticksToLive <= 750 : false);
-        } else {
-          upgraderNeedsReplaced = upgraders.length === 0;
-        }
-      } else if (this.controller.level <= 4) {
+        upgraderNeedsReplaced = upgraders.length === 0;
+      } else if (this.controller.level <= 5 && typeof this.get('build-cost') === 'undefined') {
         upgraderNeedsReplaced = upgraders.length < 3;
       } else {
+        // ~one and a half upgraders
         upgraderNeedsReplaced = upgraders.length === 0 || (upgraders.length === 1 ? upgraders[0] && upgraders[0].ticksToLive <= 750 : false);
       }
 
@@ -279,7 +274,7 @@ class Hive {
       }
     }
 
-    this.set('_controllerCpu', Game.cpu.getUsed() - cpu);
+    this.set('_nextManageController', Game.time + 50);
   }
 
   getSourceMem() {
@@ -299,6 +294,8 @@ class Hive {
 
     if (nextManageSource <= Game.time) {
       const room = this.room;
+      const controllerLevel = this.controller.level;
+
       nextManageSource = Game.time + 33;
       let nextDeathTime = 1500;
 
@@ -306,22 +303,54 @@ class Hive {
         const source = Game.getObjectById(sourceId);
         let mem = sourcesMem[sourceId];
 
+        if (!mem._distanceToController) {
+          const path = source.pos.findPathTo(this.controller, { ignoreCreeps: true });
+          if (path && path.length) {
+            mem._distanceToController = path.length;
+            mem._miningPos = { x: path[0].x, y: path[0].y }; // change to the nearest spawn...
+            room.visual.circle(mem._miningPos, { fill: 'transparent', radius: 0.55,  stroke: 'red', strokeWidth: 0.1, opacity: 0.5 });
+          }
+        } else if (!mem._relPos) {
+          let totalDistance = 0;
+          let count = 0;
+          for (const s in sourcesMem) {
+            totalDistance = totalDistance + sourcesMem[s]._distanceToController;
+            count++;
+          }
+          mem._relPos = sourcesMem[sourceId]._distanceToController >= (totalDistance / count) ? 'far' : 'near';
+        }
+
         let container = mem.container && Game.getObjectById(mem.container);
         const containerEnergy = container ? container.store.getUsedCapacity('energy') : 0;
-        if (!container) {
-          source.pos.findInRange(FIND_STRUCTURES, 2, {
+        if (!container && controllerLevel >= 2 && controllerLevel < 7) {
+          container = source.pos.findInRange(FIND_STRUCTURES, 2, {
             filter: (structure) => structure.structureType === STRUCTURE_CONTAINER,
-          }).onFirst((first) => {
-            container = first;
-            mem.container = first.id
-          });
+          }).first();
+          if (container) {
+            mem.container = container.id;
+            mem._cContainer = undefined;
+          } else if (!container && mem._miningPos && mem._cContainer !== OK) {
+            mem._cContainer = room.createConstructionSite(mem._miningPos.x, mem._miningPos.y, STRUCTURE_CONTAINER);
+          }
         }
 
         let link = mem.link && Game.getObjectById(mem.link);
-        if (!link && this.controller.level >= 5) {
-          source.pos.findInRange(FIND_STRUCTURES, 2, {
+        if (!link && controllerLevel >= 5) {
+          // I need to automatically create two links, and still need to know which is the closest
+          link = source.pos.findInRange(FIND_STRUCTURES, 2, {
             filter: (structure) => structure.structureType === STRUCTURE_LINK,
-          }).onFirst((first) => mem.link = first.id); 
+          }).first();
+
+          if (link) {
+            mem.link = link.id;
+            mem._cLink = undefined;
+          } // else {
+          //   if (mem._relPos === 'far' && controllerLevel === 5) {
+          //     // determine link position!
+          //     let x = 0; let y = y;
+          //     mem._cLink = room.createConstructionSite(x, y, STRUCTURE_LINK);
+          //   }
+          // }
         }
 
         let nearestSpawn = mem.nearestSpawn && Game.getObjectById(mem.nearestSpawn);
@@ -341,8 +370,10 @@ class Hive {
         // creates haulers for each source, if there is energy or a miner
         if (this.controller.level <= 5 && (miner || (!miner && containerEnergy > 1000))) {
           const haulers = roomSupport.getWorkers(mem, 'haulers');
-          const droppedEnergy = source.pos.findInRange(FIND_DROPPED_RESOURCES, 2, { filter: { resourceType: 'energy' } }).first();
-          const desiredHaulerCount = droppedEnergy && droppedEnergy.amount >= 1500 ? 3 : 1;
+          const desiredHaulerCount = mem._relPos && mem._relPos === 'far' ? (() => {
+            const droppedEnergy = source.pos.findInRange(FIND_DROPPED_RESOURCES, 2, { filter: { resourceType: 'energy' } }).first();
+            return droppedEnergy && droppedEnergy.amount > 1000 ? 3 : 2;
+          })() : 1;
           if (haulers.length < desiredHaulerCount) {
             const maxCost = this.room.energyCapacityAvailable < 1000 ? this.room.energyCapacityAvailable : 1000;
             const cost = this.room.energyAvailable < maxCost ? this.room.energyAvailable : maxCost;
@@ -399,9 +430,11 @@ class Hive {
       if (disabled || !((nextCheck || 0) < Game.time)) return;
 
       let mineable = !level || level < 3;
-      if (level && level >= 3) {
-        // manage controller reservation and defend from invasion
-        mineable = roomSupport.assertAuthority(this, room);
+      if (level && level >= 2) {
+        if (room) roomSupport.defendRoom(this, room);
+        if (level && level >= 3) {
+          mineable = roomSupport.assertAuthority(this, roomName);
+        } 
       }
 
       // don't create the keepers and haulers if the room isn't ready.
@@ -412,9 +445,13 @@ class Hive {
 
           if (level && level >= 3) {
             roomSupport.runKeeperTeam(this, room, sourceMem);
-          } else if (true) {
-            // todo: update to require a certain energy minimum to ensure spawns will work.
-            // roomSupport.simpleMiningTeam(this, room, sourceMem);
+          } else if (this.room.energyCapacityAvailable >= 700) {
+            let targetContainer = this.getControllerContainer().id;
+            roomSupport.simpleMiningTeam(this, roomName, sourceMem, targetContainer);
+
+            // enable actions based on room configuration
+            if (level < 2 && this.room.energyCapacityAvailable >= 1200) externalSources[roomName].level = 2;
+            if (level < 3 && this.room.storage && this.room.energyCapacityAvailable >= 1400) externalSources[roomName].level = 3;
           }
           return sourceMem;
         });
@@ -662,7 +699,7 @@ class Hive {
     }
   }
 
-  handleRoomMode() {
+  handleRoomMode(mining) {
     let mode = this.get('mode') || 'standard';
     let nextModeCheck = this.get('nextModeCheck') || 0;
     if (nextModeCheck <= Game.time) {
@@ -729,7 +766,8 @@ class Hive {
         return this.handleRecovery();
       case 'reinforcing':
       case 'expanding':
-        if (Game.time % 250 === OK && Game.cpu.bucket >= 7500) {
+        // do I have miners or storage?
+        if (Game.time % 250 === OK && Game.cpu.bucket >= 7500 && (this.room.storage || mining)) {
           // we have build sites that need attention, spawn some builders!
           const builders = this.room.find(FIND_MY_CREEPS, { filter: { memory: { job: 'builder' } } });
           const limit = this.get('build-cost') >= 10000 ? 2 : 1;
@@ -767,11 +805,12 @@ class Hive {
       // let tCpu = Game.cpu.getUsed();
       if (this.global.towers.length > 0) towerService.run(this.room, this.global.towers);
       // console.log('t-cpu', (Game.cpu.getUsed() - tCpu).toFixed(3));
-      let mode = this.handleRoomMode();
       const captureFlag = Game.flags[`capture-${this.room.name}`];
 
       const sources = this.manageSources();
       let haveMiners = !!sources;
+      let mode = this.handleRoomMode(haveMiners);
+
       if (sources) {
         for (const id in sources) {
           const sourceData = sources[id];

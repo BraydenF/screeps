@@ -100,10 +100,11 @@ class GameMap {
         const parsed = /^[WE]([0-9]+)[NS]([0-9]+)$/.exec(roomName);
         if (!parsed) return 1; // safety for non-standard room names
 
+        const room = Game.rooms[roomName];
         const x = parseInt(parsed[1], 10);
         const y = parseInt(parsed[2], 10);
         const isHighway = (x % 10 === 0) || (y % 10 === 0);
-        const isMyRoom = Game.rooms[roomName] && Game.rooms[roomName].controller && Game.rooms[roomName].controller.my || false;
+        const isMyRoom = room && room.controller && room.controller.my;
 
         if (isHighway || isMyRoom) return 1;
         const roomsToAvoid = config.roomsToAvoid[Game.shard.name];

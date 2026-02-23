@@ -210,11 +210,12 @@ class SpawnController {
 
       if (this.room.controller.level >= 8 && sourceIds.length > 1) {
         if (this.room.memory.mode === 'standard' && this.room.storage.store['energy'] >= 200000) {
-          body = [...body, WORK, WORK, MOVE, WORK, WORK, MOVE, MOVE, WORK, WORK, MOVE, MOVE, WORK];
-        } else if (this.room.storage.store['energy'] <= 250000) {
-          body = [...w5, ...m2c2];
+          body = [...body, WORK, WORK, MOVE, WORK, WORK, MOVE, WORK, WORK, MOVE, WORK, MOVE];
+        } else if (this.room.storage.store['energy'] <= 35000) {
+          body = [...w5, ...m2c2, MOVE];
         }
       }
+
       return this.createDrone('upgrader', body);
     }
   }

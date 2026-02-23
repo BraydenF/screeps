@@ -14,7 +14,7 @@ const productionNotifier = require('productionNotifier');
 
 const LOG_CPU = true;
 const homePowerSpawn = {
-  'Hephaestus': '68cca88cf686844588848795',
+  'Hephaestus': '68d3a0a892f869e2eb63389a',
   'Hephaestus II': '68d39ca14f118a576616e843',
   'Hephaestus III': '68d5190bc65c030376c56e38',
 };
@@ -185,66 +185,33 @@ class PowerCreep {
     return ERR_NO_PATH;
   }
 
-  withdraw(target, resource = RESOURCE_ENERGY, amount = null) {
-    if (typeof target === 'string') target = Game.getObjectById(target);
-
-    if (target && !this.pc.pos.isNearTo(target)) {
-      this.pc.moveTo(target);
-      return ERR_NOT_IN_RANGE;
-    }
-
-    const withdrawAttempt = this.pc.withdraw(target, resource, amount);
-    if (withdrawAttempt == ERR_NOT_IN_RANGE) {
-      this.pc.moveTo(target);
-    } else if (withdrawAttempt === ERR_FULL || withdrawAttempt === ERR_NOT_ENOUGH_RESOURCES || withdrawAttempt === ERR_INVALID_TARGET) {
-      this.enterStandby();
-    }
-    return withdrawAttempt;
-  }
-
-  transfer(target, resource = RESOURCE_ENERGY, amount = null) {
-    if (typeof target === 'string') target = Game.getObjectById(target);
-
-    if (target && !this.pc.pos.isNearTo(target)) {
-      this.pc.moveTo(target);
-      return ERR_NOT_IN_RANGE;
-    }
-
-    const status = this.pc.transfer(target, resource, amount);
-    if (status == ERR_NOT_IN_RANGE) {
-      this.pc.moveTo(target);
-    }
-    return status;
-  }
-
   load(target = null, resource = RESOURCE_ENERGY, amount = null) {
     if (typeof target === 'string') target = Game.getObjectById(target);
+    if (!target) return ERR_INVALID_TARGET;
 
-    if (target) {
-      const status = this.withdraw(target, resource, amount);
-      // console.log('loading', target, resource, amount, status);
-      if (status == ERR_INVALID_TARGET) this.set('target', undefined);
-      return status;
+    if (!this.pc.pos.isNearTo(target)) {
+      this.moveTo(target);
+      return ERR_NOT_IN_RANGE;
     }
+
+    const status = this.pc.withdraw(target, resource, amount);
+    if (status === OK || status === status || status === ERR_INVALID_TARGET || status === ERR_FULL) {
+      this.enterStandby();
+    }
+
+    return status;
   }
 
   unload(target = null, resource = RESOURCE_ENERGY, amount = null) {
     if (typeof target === 'string') target = Game.getObjectById(target);
+    if (!target) return ERR_INVALID_TARGET;
 
-    if (!target) {
-      // the drone may have strayed out of the room
-      if (this.pc.room !== this.get('targetRoom')) {
-        this.moveToRoom(this.get('targetRoom'));
-      }
+    if (!this.pc.pos.isNearTo(target)) {
+      this.moveTo(target);
+      return ERR_NOT_IN_RANGE;
     }
 
-    if (!target) {
-      const targets = this.findEmptyStorages();
-      if (targets && targets[0]) target = targets[0];
-    }
-
-    const status = this.transfer(target, resource, amount);
-    // console.log('unload', target, resource, status)
+    const status = this.pc.transfer(target, resource, amount);
     if (status === ERR_NOT_ENOUGH_RESOURCES || status === ERR_FULL || status === ERR_INVALID_TARGET) {
       this.enterStandby();
     }
@@ -404,7 +371,7 @@ class PowerCreep {
             const opFactory = this.getPower(PWR_OPERATE_FACTORY);
             if (opFactory && opFactory.cooldown === OK) {
               const amountStored = room.terminal ? room.terminal.store.getUsedCapacity('ops') : 0;
-              if (myOps <= 100 && amountStored > 0) {
+              if (myOps <= 100 && amountStored > 0 && freeCapacity > 100) {
                 this.setTask('load', room.terminal.id);
                 this.set('resource', 'ops');
                 this.set('amount', 100);
@@ -476,10 +443,10 @@ class PowerCreep {
                 if (ps.store.getFreeCapacity('energy') >= freeCapacity) {
                   this.setTask('load', energyStore);
                   break; 
-                } else if (ps.store.getFreeCapacity('power') >= 100 && this.room.storage.store['power'] >= 100) {
+                } else if (ps.store.getFreeCapacity('power') >= 100 && this.room.storage.store['power'] > 0) {
                   this.setTask('load', this.room.storage.id);
                   this.set('resource', 'power');
-                  this.set('amount', 100);
+                  this.set('amount', Math.min(100, this.room.storage.store['power']));
                   break;
                 }
               }

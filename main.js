@@ -16,26 +16,29 @@ global.Drone = Drone;
 // global.profiler = profiler;
 
 /**
- * Spawn7, Spawn3aa; sources:[59bbc4952052a716c3ce8301, 59bbc4952052a716c3ce8303]
- * Spawn7.createDrone('flagbearer', [MOVE, MOVE, CLAIM], {targetShard:'shard1',targetRoom:'W3N51'})
- * Spawn7.createDrone('miner', [...m5,...w5], {targetShard:'shard1', targetRoom:'W3N51',source:'59bbc4952052a716c3ce8303'})
- * Spawn3aa.createDrone('drone', [...m10,...w10, ...m10, ...c10], {targetShard:'shard1', targetRoom:'W3N51'})
- * Spawn3aa.createDrone('drone', [...m10,...w10, ...m10, ...c10], {source:'59bbc4952052a716c3ce8301',targetShard:'shard1', targetRoom:'W3N51'})
+ * { targetRoom:'E7N53', source:'59bbc4ae2052a716c3ce85cb' OR '59bbc4ae2052a716c3ce85ca'});
+ * hives['E7N52'].spawnController.createDrone('miner', [...w5,...m5], {targetRoom:'E7N53',source:'59bbc4ae2052a716c3ce85ca'});
+ * 
+ * sources:[59bbc4ac2052a716c3ce857f, 59bbc4ac2052a716c3ce8580] - 59bbc4ae2052a716c3ce85cf E&N52
+ * hives['E7N52'].spawnController.createDrone.createDrone('flagbearer', [MOVE, MOVE, CLAIM], {targetShard:'shard1',targetRoom:'E7N53'})
+* hives['E7N52'].spawnController.createDrone('miner', [...m5,...w5], {targetShard:'shard1', targetRoom:'E7N53',source:'59bbc4ae2052a716c3ce85cb'})
+ * Spawn5.createDrone('drone', [...m10,...w10, ...m10, ...c10], {targetShard:'shard1', targetRoom:'E7N53'})
+ * Spawn5b.createDrone('drone', [...m10,...w10, ...m10, ...c10], {source:'59bbc4ac2052a716c3ce8580',targetShard:'shard1', targetRoom:'E6N51'})
+ * 
+ * 
+ * SpawnH.createDrone('battleRam', [...w5, ...m5], {targetRoom:'E7N53',targets:['5afb9d100a7ef61358a0a4e3']});
+ * 
  */
 
 /**
  * Notes
  * - Create a schedule for Hephaestus to move between level 1 factory rooms
  * - Determine a better way to schedule power banks, strongholds, and excavations
- * - Create a schedule for stewards to increase power consumption (Current CPU loads indicate I can only have one steward.)
- * - Update market prices to change over time (increase only?)
- * - Create better terminal resource management logic tied to 
- * - Capture the western block Z roomthe mineral
+ * - Update market prices to change over time
+ * - Create better terminal resource management logic tied to room mineral
  * - 
  *
  * - Investigate and determine if more drastic CPU saving is needed...
- * - What can I do to fix CPU at this point?
- * -- keepers, haulers, and miners occasionally cost .3-.8 for job checks, can this be improved?
  * -- Do I have any room searches still happening reguarly?
  * -- 
  */
@@ -179,7 +182,7 @@ module.exports.loop = function () {
   //   }
   // }
 
-  if (Game.cpu.bucket > 2500 && Game.shard.name === 'shard3') {
+  if (Game.cpu.bucket > 2500 || (Game.shard.name === 'shard3' && Game.cpu.bucket < 10000)) {
     const fincpu = Game.cpu.getUsed();
     const bucket = Game.cpu.bucket <= 9900 ? ` B:${Game.cpu.bucket}` : '';
     let cpuReport = 'cpu ' + (fincpu > 20 ? `_${fincpu.toFixed(4)}_` : fincpu.toFixed(4)) + bucket;

@@ -10,6 +10,9 @@ const roomSupport = {
     }
     return sourceMem
   },
+  getSourceContainer(source) {
+
+  },
   getWorkers: function(memory, key) {
     const names = typeof memory[key] !== 'undefined' ? memory[key] : [];
     const workers = [];
@@ -30,54 +33,54 @@ const roomSupport = {
     }
     return mem;
   },
-  assertAuthority(hive, room) {
+  defendRoom(hive, room) {
+    // if (room.controller.owner) externalSources[room.name].disabled = true;
+    const invaders = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
+    if (invaders.length > 0) {
+      const gunship = hive.findCreeps(c => c && c.memory.job === 'gunship' && c.memory.targetRoom === room.name).onEmpty(() => {
+        let body = hive.controller.level >= 7 ? [...m10, ...ra10] : [...m5, ...ra5];
+        hive.spawnController.createDrone('gunship', body, { targetRoom: room.name, target: invaders[0].id });
+      });
+    }
+
+    const invaderCores = room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_INVADER_CORE } });
+    if (invaderCores.length > 0) {
+      const soldiers = hive.findCreeps(c => c && c.memory.job === 'soldier' && c.memory.targetRoom === room.name).onEmpty(() => {
+        const target = invaders.length > 0 ? invaders[0].id : invaderCores[0].id;
+        let body = hive.controller.level >= 7 ? [...m10, ...a10] : [MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK];
+        hive.spawnController.createDrone('soldier', body, { targetRoom: room.name, target });
+      });
+    }
+  },
+  assertAuthority(hive, roomName) {
+    const room = Game.rooms[roomName];
     const reservation = room && room.controller.reservation;
     let owned = reservation && reservation.owner === Game.username;
 
     if (!reservation || (owned && reservation.ticksToEnd < 3500)) {
-      hive.findCreeps(c => c && c.memory.job === 'flagbearer' && c.memory.targetRoom === room.name).onEmpty(() => {
-        const body = hive.room.controller.level >= 7 ? [MOVE, MOVE, MOVE, CLAIM, CLAIM, CLAIM] : [MOVE, CLAIM];
-        hive.spawnController.createDrone('flagbearer', body, { targetRoom: room.name });
+      hive.findCreeps(c => c && c.memory.job === 'flagbearer' && c.memory.targetRoom === roomName).onEmpty(() => {
+        let body = hive.room.controller.level >= 7 ? [MOVE, MOVE, MOVE, CLAIM, CLAIM, CLAIM] : [MOVE, MOVE, CLAIM, CLAIM];
+        if (hive.room.energyCapacityAvailable < 1400) body = [MOVE, CLAIM];
+        hive.spawnController.createDrone('flagbearer', body, { targetRoom: roomName });
       });
-    }
-
-    if (room) {
-      // if (room.controller.owner) externalSources[room.name].disabled = true;
-      const invaders = room.find(FIND_HOSTILE_CREEPS, { filter: { owner: { username: 'Invader' } } });
-      if (invaders.length > 0) {
-        const gunship = hive.findCreeps(c => c && c.memory.job === 'gunship' && c.memory.targetRoom === room.name).onEmpty(() => {
-          let body = hive.controller.level >= 7 ? [...m10, ...ra10] : [...m5, ...ra5];
-          hive.spawnController.createDrone('gunship', body, { targetRoom: room.name, target: invaders[0].id });
-        });
-      }
-
-      const invaderCores = room.find(FIND_STRUCTURES, { filter: { structureType: STRUCTURE_INVADER_CORE } });
-      if (invaderCores.length > 0) {
-        const soldiers = hive.findCreeps(c => c && c.memory.job === 'soldier' && c.memory.targetRoom === room.name).onEmpty(() => {
-          const target = invaders.length > 0 ? invaders[0].id : invaderCores[0].id;
-          let body = hive.controller.level >= 7 ? [...m10, ...a10] : [MOVE, MOVE, MOVE, MOVE, ATTACK, ATTACK, ATTACK, ATTACK];
-          hive.spawnController.createDrone('soldier', body, { targetRoom: room.name, target });
-        });
-      }
     }
 
     return owned;
   },
-  simpleMiningTeam(room, source) {
-    const mem = room.memory.sources ? room.memory.sources[source] : {};
-    const miner = mem.miner && Game.creeps[mem.miner];
-    const haulers = roomSupport.getWorkers(room.memory, 'haulers');
+  simpleMiningTeam(hive, roomName, sourceMem, targetStore) {
+    const miner = sourceMem.miner && Game.creeps[sourceMem.miner];
+    const haulers = roomSupport.getWorkers(sourceMem, 'haulers');
+    const creepMemory = { targetRoom: roomName, source: sourceMem.id, targetStore };
 
+    const hasOptimalCap = hive.room.energyCapacityAvailable >= 1000;
+    const desiredHaulerCount = hasOptimalCap ? 2 : 3;
     if (!miner || miner.ticksToLive <= 33) {
-      const res = spawnController.createDrone('miner', [MOVE,MOVE,MOVE,WORK,WORK,WORK], { targetRoom: room.name, source });
-      if (res.status === OK) {
-        mem.miner = res.name;
-      }
-    } else if (haulers.length < 2) {
-      const res = spawnController.createDrone('hauler', [...m5, ...c5], { targetRoom: room.name, source });
-      if (res.status === OK) {
-        mem.miner = res.name;
-      }
+      const res = hive.spawnController.createDrone('miner', [MOVE,MOVE,MOVE,WORK,WORK,WORK], creepMemory); // 450
+      if (res.status === OK) sourceMem.miner = res.name;
+    } else if (haulers.length < desiredHaulerCount) {
+      const body = hasOptimalCap ? m10c10 : m5c5;
+      const res = hive.spawnController.createDrone('hauler', body, creepMemory); // 500
+      if (res.status === OK) haulers.push(res.name);
     }
   },
   runKeeperTeam(hive, room, sourceMem) {
@@ -113,8 +116,10 @@ const roomSupport = {
           }
         });
 
-        if (!haulers || haulers.length < 1) {
-          let body = hive.controller.level >= 7 ? [...m10c10, ...m2c2, ...m2c2, ...m2c2,] : m10c10;
+        const hasOptimalCap = hive.room.energyCapacityAvailable >= 1600;
+        const desiredHaulerCount = hasOptimalCap ? 1 : 2;
+        if (!haulers || haulers.length < desiredHaulerCount) {
+          let body = hasOptimalCap ? [...m10c10, ...m2c2, ...m2c2, ...m2c2,] : m10c10;
           hive.spawnController.setNextSpawn({ job: 'hauler', body, memory: { targetRoom: room.name, source: sourceMem.id, container: container.id } });
         }
       } else {
@@ -209,8 +214,10 @@ const roomSupport = {
               }
             });
 
-            if (!haulers || haulers.length < 1) {
-              let body = hive.controller.level >= 7 ? [...m10c10, ...m2c2, ...m2c2, ...m2c2,] : m10c10;
+            const hasOptimalCap = hive.room.energyCapacityAvailable >= 1600;
+            const desiredHaulerCount = hasOptimalCap ? 1 : 2;
+            if (!haulers || haulers.length < desiredHaulerCount) {
+              let body = hasOptimalCap ? [...m10c10, ...m2c2, ...m2c2, ...m2c2,] : m10c10; // 1600
               hive.spawnController.setNextSpawn({ job: 'hauler', body, memory: { targetRoom: roomName, source: sourceMem.id, container: container.id } });
             }
           } else {
